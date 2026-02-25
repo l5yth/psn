@@ -207,3 +207,24 @@ fn page_navigation_noops_for_zero_step() {
 
     assert_eq!(app.table_state.selected(), Some(2));
 }
+
+#[test]
+fn page_down_handles_huge_step_without_overflow() {
+    let rows = (1..=5).map(row).collect::<Vec<_>>();
+    let mut app = App::with_rows(None, rows);
+    app.table_state.select(Some(1));
+
+    app.page_down(usize::MAX);
+
+    assert_eq!(app.table_state.selected(), Some(4));
+}
+
+#[test]
+fn page_down_clears_invalid_selection_when_rows_are_empty() {
+    let mut app = App::with_rows(None, vec![]);
+    app.table_state.select(Some(3));
+
+    app.page_down(1);
+
+    assert_eq!(app.table_state.selected(), None);
+}

@@ -123,8 +123,9 @@ impl App {
             }
 
             let last_index = self.rows.len() - 1;
+            let next_index = selected.saturating_add(step);
             self.table_state
-                .select(Some(min(selected + step, last_index)));
+                .select(Some(min(next_index, last_index)));
         } else if !self.rows.is_empty() {
             self.table_state
                 .select(Some(min(step - 1, self.rows.len() - 1)));
