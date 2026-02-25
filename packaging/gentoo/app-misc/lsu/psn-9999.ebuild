@@ -16,10 +16,7 @@ IUSE=""
 PROPERTIES="live"
 
 RDEPEND="
-	|| (
-		sys-apps/systemd
-		sys-apps/systemd-utils
-	)
+	sys-process/procps
 "
 BDEPEND="
 	dev-lang/rust

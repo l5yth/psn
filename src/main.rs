@@ -2,19 +2,15 @@ use anyhow::Result;
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use nix::sys::signal::{kill, Signal};
+use nix::sys::signal::{Signal, kill};
 use nix::unistd::Pid;
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState},
 };
-use std::{
-    cmp::min,
-    io,
-    time::Duration,
-};
+use std::{cmp::min, io, time::Duration};
 use sysinfo::{ProcessStatus, ProcessesToUpdate, System};
 
 #[derive(Clone, Debug)]
@@ -289,16 +285,18 @@ fn main() -> Result<()> {
                                         if let Some(sig) = signal_from_digit(d) {
                                             let pid = Pid::from_raw(row.pid);
                                             match kill(pid, sig) {
-                                                Ok(_) => status = format!(
-                                                    "sent {:?} ({}) to pid {}",
-                                                    sig,
-                                                    d,
-                                                    row.pid
-                                                ),
-                                                Err(e) => status = format!(
-                                                    "failed to signal pid {}: {}",
-                                                    row.pid, e
-                                                ),
+                                                Ok(_) => {
+                                                    status = format!(
+                                                        "sent {:?} ({}) to pid {}",
+                                                        sig, d, row.pid
+                                                    )
+                                                }
+                                                Err(e) => {
+                                                    status = format!(
+                                                        "failed to signal pid {}: {}",
+                                                        row.pid, e
+                                                    )
+                                                }
                                             }
                                         }
                                     }
