@@ -1,36 +1,67 @@
 # Repository Guidelines
 
-## Project Structure & Module Organization
-- `src/main.rs`: current application entry point and core TUI/process logic.
-- `.github/workflows/`: CI pipelines for Rust quality checks and Linux packaging validation.
-- `Cargo.toml`: crate metadata and dependencies.
-- `target/`: local build artifacts (generated; do not commit).
+## Purpose
+`psn` is a Linux-first Rust TUI for process status navigation and signal-based process control (for example sending signals 1-9 to the selected process).
 
-As the codebase grows, prefer splitting logic from `main.rs` into focused modules under `src/` (for example `src/ui.rs`, `src/process.rs`) and add integration tests under `tests/`.
+## Project Structure & Module Organization
+- `src/main.rs`: thin binary entry point only (argument parsing, wiring, startup/shutdown).
+- `src/`: feature modules. Keep logic out of `main.rs`.
+- `tests/`: integration tests.
+- `.github/workflows/`: CI for formatting, linting, tests, docs, and coverage.
+- `Cargo.toml`: crate metadata/dependencies.
+- `packaging/`: distro packaging files (Arch/Gentoo).
+- `target/`: generated build artifacts; never commit.
+
+Current state is still mostly monolithic. Ongoing refactors must split code into focused modules, such as:
+- `src/app.rs`: app state and event loop orchestration.
+- `src/ui.rs`: rendering only.
+- `src/process.rs`: process discovery/filter/sort mapping.
+- `src/signal.rs`: signal mapping and send helpers.
+- `src/terminal.rs`: terminal setup/restore lifecycle.
+
+Rules:
+- Keep modules small and cohesive.
+- Avoid cross-module cycles and hidden shared mutable state.
+- Prefer pure functions for business logic; isolate side effects at boundaries.
 
 ## Build, Test, and Development Commands
-- `cargo check --all --all-features`: fast compile validation.
-- `cargo run --release --`: run the TUI locally with release optimizations.
-- `cargo test --all --all-features --verbose`: execute test suite.
-- `cargo fmt --all`: apply standard Rust formatting.
-- `cargo clippy --all-targets --all-features -- -D warnings`: lint and fail on warnings.
-- `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items`: build docs with warnings denied.
+- `cargo check --all --all-features`
+- `cargo run --release --`
+- `cargo test --all --all-features --verbose`
+- `cargo fmt --all`
+- `cargo fmt --all -- --check`
+- `cargo clippy --all-targets --all-features -- -D warnings`
+- `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items`
+- `cargo llvm-cov --workspace --lcov --output-path lcov.info --fail-under-lines 100`
 
-Use these same commands before opening a PR; they mirror CI in `.github/workflows/rust.yml`.
+Before every PR, run the full quality gate locally: fmt-check, clippy, tests, docs, and coverage at 100% lines.
 
 ## Coding Style & Naming Conventions
-- Follow `rustfmt` defaults (4-space indentation; no tabs).
-- Keep functions and variables in `snake_case`, types/traits in `CamelCase`, constants in `SCREAMING_SNAKE_CASE`.
-- Prefer small, single-purpose functions and explicit error propagation with `anyhow::Result`.
-- Keep terminal/UI strings concise and user-facing messages actionable.
+- Follow `rustfmt` defaults (4 spaces, no tabs).
+- Naming: `snake_case` (functions/vars), `CamelCase` (types/traits), `SCREAMING_SNAKE_CASE` (constants).
+- Prefer small, single-purpose functions with explicit `anyhow::Result` error propagation where appropriate.
+- Keep code minimalist: no dead code, no speculative abstractions, no unused dependencies.
+- Keep UI text concise, actionable, and consistent with terminal constraints.
 
-## Testing Guidelines
-- Use Rust’s built-in test framework (`#[test]`, `cargo test`).
-- Place unit tests close to implementation (`mod tests` in source files) and integration tests in `tests/`.
-- Name tests to describe behavior, e.g. `refresh_rows_sorts_by_cpu_then_mem`.
-- Coverage is collected in CI via `cargo llvm-cov`; add tests for new logic and bug fixes.
+## Documentation Requirements
+- Public and non-trivial internal APIs must have inline Rust doc comments explaining behavior and invariants.
+- Document why non-obvious decisions exist (sorting rules, fallback behavior, signal mapping limits, etc.).
+- Keep docs close to code and update them in the same change as logic updates.
+- `cargo doc` must pass with warnings denied.
+
+## Testing Requirements
+- Use Rust’s built-in framework (`#[test]`) for unit tests and `tests/` for integration tests.
+- Every non-trivial function must have unit tests covering normal, edge, and error behavior.
+- Prefer deterministic tests for sorting/filtering/signal mapping logic.
+- Coverage target is strict: 100% line coverage for project code.
+- If coverage is below 100%, add tests in the same PR until the gate passes.
+- Test names must describe behavior (example: `refresh_rows_filters_by_name_or_cmd_case_insensitive`).
 
 ## Commit & Pull Request Guidelines
-- Current branch has no commit history yet; adopt Conventional Commits going forward (e.g. `feat: add process filter`, `fix: handle missing uid`).
-- Keep commits focused and buildable.
-- PRs should include a clear summary and motivation, linked issue (if any), test evidence (command output or checklist), and screenshots/GIFs for TUI-visible behavior changes.
+- Use Conventional Commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`).
+- Keep commits focused, buildable, and minimal.
+- PRs must include a clear summary and motivation.
+- PRs must include linked issue(s), when applicable.
+- PRs must include test evidence (commands run and results).
+- PRs must include screenshots/GIFs for user-visible TUI changes.
+- PRs must explicitly call out module boundaries touched and architectural impacts.
