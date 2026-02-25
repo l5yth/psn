@@ -40,8 +40,8 @@ pub fn run() -> Result<()> {
 
     let mut terminal = setup_terminal()?;
     let mut sys = System::new_all();
-    let mut app = App::with_rows(filter, process::refresh_rows(&mut sys, None));
-    app.refresh(process::refresh_rows(&mut sys, app.filter()));
+    let initial_rows = process::refresh_rows(&mut sys, filter.as_deref());
+    let mut app = App::with_rows(filter, initial_rows);
 
     let run_result = (|| -> Result<()> {
         loop {
