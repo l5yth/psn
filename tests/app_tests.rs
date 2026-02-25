@@ -166,3 +166,65 @@ fn send_digit_ignores_missing_row_for_selected_index() {
 fn dummy_sender_returns_ok() {
     assert!(dummy_sender(1, Signal::SIGCONT).is_ok());
 }
+
+#[test]
+fn page_up_and_down_use_step_and_clamp_bounds() {
+    let rows = (1..=30).map(row).collect::<Vec<_>>();
+    let mut app = App::with_rows(None, rows);
+
+    app.table_state.select(Some(15));
+    app.page_up(10);
+    assert_eq!(app.table_state.selected(), Some(5));
+
+    app.page_up(10);
+    assert_eq!(app.table_state.selected(), Some(0));
+
+    app.page_down(10);
+    assert_eq!(app.table_state.selected(), Some(10));
+
+    app.page_down(50);
+    assert_eq!(app.table_state.selected(), Some(29));
+}
+
+#[test]
+fn page_down_selects_row_when_selection_missing() {
+    let rows = (1..=5).map(row).collect::<Vec<_>>();
+    let mut app = App::with_rows(None, rows);
+    app.table_state.select(None);
+
+    app.page_down(3);
+    assert_eq!(app.table_state.selected(), Some(2));
+}
+
+#[test]
+fn page_navigation_noops_for_zero_step() {
+    let rows = (1..=5).map(row).collect::<Vec<_>>();
+    let mut app = App::with_rows(None, rows);
+    app.table_state.select(Some(2));
+
+    app.page_up(0);
+    app.page_down(0);
+
+    assert_eq!(app.table_state.selected(), Some(2));
+}
+
+#[test]
+fn page_down_handles_huge_step_without_overflow() {
+    let rows = (1..=5).map(row).collect::<Vec<_>>();
+    let mut app = App::with_rows(None, rows);
+    app.table_state.select(Some(1));
+
+    app.page_down(usize::MAX);
+
+    assert_eq!(app.table_state.selected(), Some(4));
+}
+
+#[test]
+fn page_down_clears_invalid_selection_when_rows_are_empty() {
+    let mut app = App::with_rows(None, vec![]);
+    app.table_state.select(Some(3));
+
+    app.page_down(1);
+
+    assert_eq!(app.table_state.selected(), None);
+}

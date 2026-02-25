@@ -30,6 +30,8 @@ use crossterm::{
 };
 use ratatui::{Terminal, prelude::CrosstermBackend};
 use std::{cmp::min, io, time::Duration};
+
+const PAGE_STEP: usize = 10;
 use sysinfo::System;
 
 use crate::app::App;
@@ -61,6 +63,8 @@ pub fn run() -> Result<()> {
                     }
                     KeyCode::Up => app.move_up(),
                     KeyCode::Down => app.move_down(),
+                    KeyCode::PageUp => app.page_up(PAGE_STEP),
+                    KeyCode::PageDown => app.page_down(PAGE_STEP),
                     KeyCode::Char(c) if c.is_ascii_digit() => {
                         let digit = c.to_digit(10).unwrap_or_default() as u8;
                         if !(1..=9).contains(&digit) {

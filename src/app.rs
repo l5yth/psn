@@ -99,6 +99,38 @@ impl App {
         }
     }
 
+    /// Move selection one page up by the provided step.
+    pub fn page_up(&mut self, step: usize) {
+        if step == 0 {
+            return;
+        }
+
+        if let Some(selected) = self.table_state.selected() {
+            self.table_state.select(Some(selected.saturating_sub(step)));
+        }
+    }
+
+    /// Move selection one page down by the provided step.
+    pub fn page_down(&mut self, step: usize) {
+        if step == 0 {
+            return;
+        }
+
+        if let Some(selected) = self.table_state.selected() {
+            if self.rows.is_empty() {
+                self.table_state.select(None);
+                return;
+            }
+
+            let last_index = self.rows.len() - 1;
+            let next_index = selected.saturating_add(step);
+            self.table_state.select(Some(min(next_index, last_index)));
+        } else if !self.rows.is_empty() {
+            self.table_state
+                .select(Some(min(step - 1, self.rows.len() - 1)));
+        }
+    }
+
     /// Send a digit-mapped signal to selected process through injected sender.
     pub fn send_digit(
         &mut self,
