@@ -10,7 +10,7 @@
 [![Top Language](https://img.shields.io/github/languages/top/l5yth/psn)](https://github.com/l5yth/psn)
 [![License: Apache-2.0](https://img.shields.io/github/license/l5yth/psn)](https://github.com/l5yth/psn/blob/main/LICENSE)
 
-`psn` is a Rust terminal UI for viewing `ps` process stati and terminating them.
+`psn` is a Rust terminal UI for viewing process status and sending signals.
 
 ## Dependencies
 
@@ -18,7 +18,7 @@
 - `ps` available in `$PATH`
 - Some current Rust stable toolchain (Rust 2024 edition, Cargo)
 
-Core crates: `ratatui`, `crossterm`, `sysinfo`, `nix`, `anyhow`.
+Core crates: `ratatui`, `crossterm`, `sysinfo`, `nix`, `anyhow`, `users`.
 
 ## Installation
 
@@ -67,7 +67,7 @@ cargo run --release --
 psn v0.1.0
 apache v2 (c) 2026 l5yth
 
-Usage: psn [OPTIONS]
+Usage: psn [FILTER]
 ```
 
 Examples:
@@ -80,8 +80,9 @@ psn "sshd"
 In-app keys:
 
 - `q`: quit
-- `r`: refresh now
-- `↑` / `↓`: move selection in service unit list
+- `r`: refresh process list
+- `↑` / `↓`: move selection in process list
+- `1`..`9`: send corresponding kill signal to selected process
 
 ## Development
 
@@ -89,5 +90,5 @@ In-app keys:
 cargo check
 cargo test --all --all-features --verbose
 cargo fmt --all
-cargo clippy --all-targets --all-features -D warnings
+cargo clippy --all-targets --all-features -- -D warnings
 ```
