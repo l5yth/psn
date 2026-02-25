@@ -68,9 +68,11 @@ pub fn run() -> Result<()> {
                         let mut sender =
                             |pid, sig| signal::send_signal(pid, sig).map_err(|err| err.to_string());
                         app.send_digit(digit, &mut sender);
+                        let signal_status = app.status.clone();
 
                         let selected_before_refresh = app.table_state.selected().unwrap_or(0);
                         app.refresh(process::refresh_rows(&mut sys, app.filter()));
+                        app.status = signal_status;
                         if !app.rows.is_empty() {
                             app.table_state
                                 .select(Some(min(selected_before_refresh, app.rows.len() - 1)));
