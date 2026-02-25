@@ -40,10 +40,10 @@ fn to_user(uid: Option<&sysinfo::Uid>) -> String {
     // If not available, show numeric-ish fallback.
     if let Some(uid) = uid {
         let s = uid.to_string();
-        if let Ok(uid_num) = s.parse::<u32>() {
-            if let Some(u) = users::get_user_by_uid(uid_num) {
-                return u.name().to_string_lossy().to_string();
-            }
+        if let Ok(uid_num) = s.parse::<u32>()
+            && let Some(u) = users::get_user_by_uid(uid_num)
+        {
+            return u.name().to_string_lossy().to_string();
         }
         return s;
     }
@@ -244,67 +244,59 @@ fn main() -> Result<()> {
             })?;
 
             // input
-            if event::poll(Duration::from_millis(60))? {
-                if let Event::Key(k) = event::read()? {
-                    if k.kind != KeyEventKind::Press {
-                        continue;
+            if event::poll(Duration::from_millis(60))?
+                && let Event::Key(k) = event::read()?
+            {
+                if k.kind != KeyEventKind::Press {
+                    continue;
+                }
+                match k.code {
+                    KeyCode::Char('q') => break,
+                    KeyCode::Char('r') => {
+                        rows = refresh_rows(&mut sys, &filter);
+                        let sel = table_state.selected().unwrap_or(0);
+                        if rows.is_empty() {
+                            table_state.select(None);
+                        } else {
+                            table_state.select(Some(min(sel, rows.len() - 1)));
+                        }
+                        status.clear();
                     }
-                    match k.code {
-                        KeyCode::Char('q') => break,
-                        KeyCode::Char('r') => {
-                            rows = refresh_rows(&mut sys, &filter);
-                            let sel = table_state.selected().unwrap_or(0);
-                            if rows.is_empty() {
-                                table_state.select(None);
-                            } else {
-                                table_state.select(Some(min(sel, rows.len() - 1)));
-                            }
-                            status.clear();
+                    KeyCode::Up => {
+                        if let Some(sel) = table_state.selected()
+                            && sel > 0
+                        {
+                            table_state.select(Some(sel - 1));
                         }
-                        KeyCode::Up => {
-                            if let Some(sel) = table_state.selected() {
-                                if sel > 0 {
-                                    table_state.select(Some(sel - 1));
-                                }
-                            }
-                        }
-                        KeyCode::Down => {
-                            if let Some(sel) = table_state.selected() {
-                                if !rows.is_empty() && sel + 1 < rows.len() {
-                                    table_state.select(Some(sel + 1));
-                                }
-                            } else if !rows.is_empty() {
-                                table_state.select(Some(0));
-                            }
-                        }
-                        KeyCode::Char(c) if c.is_ascii_digit() => {
-                            let d = c.to_digit(10).unwrap() as u8;
-                            if (1..=9).contains(&d) {
-                                if let Some(sel) = table_state.selected() {
-                                    if let Some(row) = rows.get(sel) {
-                                        if let Some(sig) = signal_from_digit(d) {
-                                            let pid = Pid::from_raw(row.pid);
-                                            match kill(pid, sig) {
-                                                Ok(_) => {
-                                                    status = format!(
-                                                        "sent {:?} ({}) to pid {}",
-                                                        sig, d, row.pid
-                                                    )
-                                                }
-                                                Err(e) => {
-                                                    status = format!(
-                                                        "failed to signal pid {}: {}",
-                                                        row.pid, e
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        _ => {}
                     }
+                    KeyCode::Down => {
+                        if let Some(sel) = table_state.selected() {
+                            if !rows.is_empty() && sel + 1 < rows.len() {
+                                table_state.select(Some(sel + 1));
+                            }
+                        } else if !rows.is_empty() {
+                            table_state.select(Some(0));
+                        }
+                    }
+                    KeyCode::Char(c) if c.is_ascii_digit() => {
+                        let d = c.to_digit(10).unwrap() as u8;
+                        if (1..=9).contains(&d)
+                            && let Some(sel) = table_state.selected()
+                            && let Some(row) = rows.get(sel)
+                            && let Some(sig) = signal_from_digit(d)
+                        {
+                            let pid = Pid::from_raw(row.pid);
+                            match kill(pid, sig) {
+                                Ok(_) => {
+                                    status = format!("sent {:?} ({}) to pid {}", sig, d, row.pid)
+                                }
+                                Err(e) => {
+                                    status = format!("failed to signal pid {}: {}", row.pid, e)
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
         }

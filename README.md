@@ -89,5 +89,5 @@ In-app keys:
 cargo check
 cargo test --all --all-features --verbose
 cargo fmt --all
-cargo clippy --all-targets --all-features -D warnings
+cargo clippy --all-targets --all-features -- -D warnings
 ```
