@@ -24,17 +24,17 @@ use ratatui::{
 use crate::{app::App, process::status_dot_color};
 
 /// Build the table title based on filter and process count.
-pub fn build_title(filter: Option<&str>, count: usize) -> String {
+pub fn build_title(filter: Option<&str>, _count: usize) -> String {
     match filter {
-        Some(filter_value) => format!("psn - filter: \"{}\" - {} procs", filter_value, count),
-        None => format!("psn - {} procs", count),
+        Some(filter_value) => format!("process status - filter: \"{}\"", filter_value),
+        None => "process status".to_string(),
     }
 }
 
 /// Build the static help text.
 pub fn build_help(count: usize) -> String {
     format!(
-        "procs: {} | ↑/↓ select | 1-9: send kill signal 1-9 | r: refresh | q: quit",
+        "processes: {} | ↑/↓: select | 1-9: send signal (1-9) | r: refresh | q: quit",
         count
     )
 }
@@ -129,16 +129,16 @@ mod tests {
 
     #[test]
     fn build_title_handles_filter_and_plain_modes() {
-        assert_eq!(build_title(None, 3), "psn - 3 procs");
+        assert_eq!(build_title(None, 3), "process status");
         assert_eq!(
             build_title(Some("ssh"), 5),
-            "psn - filter: \"ssh\" - 5 procs"
+            "process status - filter: \"ssh\""
         );
     }
 
     #[test]
     fn build_help_contains_count() {
-        assert!(build_help(9).contains("procs: 9"));
+        assert!(build_help(9).contains("processes: 9"));
     }
 
     #[test]
@@ -166,7 +166,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join("");
 
-        assert!(text.contains("psn - filter: \"psn\" - 1 procs"));
-        assert!(text.contains("procs: 1"));
+        assert!(text.contains("process status - filter: \"psn\""));
+        assert!(text.contains("processes: 1"));
     }
 }
