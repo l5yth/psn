@@ -14,8 +14,6 @@
    limitations under the License.
 */
 
-#![allow(unexpected_cfgs)]
-
 //! Core library for `psn`.
 
 pub mod app;
@@ -25,31 +23,18 @@ pub mod signal;
 pub mod ui;
 
 use anyhow::Result;
-
-#[cfg(not(coverage))]
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-#[cfg(not(coverage))]
 use ratatui::{Terminal, prelude::CrosstermBackend};
-#[cfg(not(coverage))]
 use std::{cmp::min, io, time::Duration};
-#[cfg(not(coverage))]
 use sysinfo::System;
 
-#[cfg(not(coverage))]
 use crate::app::App;
 
 /// Run the interactive TUI application.
-#[cfg(coverage)]
-pub fn run() -> Result<()> {
-    Ok(())
-}
-
-/// Run the interactive TUI application.
-#[cfg(not(coverage))]
 pub fn run() -> Result<()> {
     let filter = std::env::args().nth(1);
 
@@ -103,7 +88,6 @@ pub fn run() -> Result<()> {
     run_result
 }
 
-#[cfg(not(coverage))]
 fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -111,17 +95,8 @@ fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
     Ok(Terminal::new(CrosstermBackend::new(stdout))?)
 }
 
-#[cfg(not(coverage))]
 fn restore_terminal(mut terminal: Terminal<CrosstermBackend<io::Stdout>>) {
     let _ = disable_raw_mode();
     let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
     let _ = terminal.show_cursor();
-}
-
-#[cfg(all(test, coverage))]
-mod tests {
-    #[test]
-    fn run_returns_ok_under_coverage() {
-        assert!(super::run().is_ok());
-    }
 }
