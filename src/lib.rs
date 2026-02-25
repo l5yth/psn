@@ -1,5 +1,18 @@
-// Copyright (c) 2026 l5yth
-// SPDX-License-Identifier: Apache-2.0
+/*
+   Copyright (C) 2026 l5yth
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+*/
 
 #![allow(unexpected_cfgs)]
 
@@ -68,11 +81,11 @@ pub fn run() -> Result<()> {
                         let mut sender =
                             |pid, sig| signal::send_signal(pid, sig).map_err(|err| err.to_string());
                         app.send_digit(digit, &mut sender);
-                        let signal_status = app.status.clone();
-
                         let selected_before_refresh = app.table_state.selected().unwrap_or(0);
-                        app.refresh(process::refresh_rows(&mut sys, app.filter()));
-                        app.status = signal_status;
+                        app.refresh_preserving_status(process::refresh_rows(
+                            &mut sys,
+                            app.filter(),
+                        ));
                         if !app.rows.is_empty() {
                             app.table_state
                                 .select(Some(min(selected_before_refresh, app.rows.len() - 1)));

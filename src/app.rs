@@ -1,5 +1,18 @@
-// Copyright (c) 2026 l5yth
-// SPDX-License-Identifier: Apache-2.0
+/*
+   Copyright (C) 2026 l5yth
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+*/
 
 //! Application state and interaction logic.
 
@@ -42,8 +55,19 @@ impl App {
         self.filter.as_deref()
     }
 
-    /// Replace row data and keep selection bounded to available rows.
+    /// Replace row data, keep selection bounded, and clear status text.
     pub fn refresh(&mut self, rows: Vec<ProcRow>) {
+        self.apply_rows(rows);
+        self.status.clear();
+    }
+
+    /// Replace row data while preserving current status text.
+    pub fn refresh_preserving_status(&mut self, rows: Vec<ProcRow>) {
+        self.apply_rows(rows);
+    }
+
+    /// Update rows and clamp selection to valid bounds.
+    fn apply_rows(&mut self, rows: Vec<ProcRow>) {
         let selected_before = self.table_state.selected().unwrap_or(0);
         self.rows = rows;
 
@@ -53,8 +77,6 @@ impl App {
             self.table_state
                 .select(Some(min(selected_before, self.rows.len() - 1)));
         }
-
-        self.status.clear();
     }
 
     /// Move selection one row up.
