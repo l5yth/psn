@@ -63,6 +63,10 @@ pub fn run() -> Result<()> {
                     KeyCode::Down => app.move_down(),
                     KeyCode::Char(c) if c.is_ascii_digit() => {
                         let digit = c.to_digit(10).unwrap_or_default() as u8;
+                        if !(1..=9).contains(&digit) {
+                            continue;
+                        }
+
                         let mut sender =
                             |pid, sig| signal::send_signal(pid, sig).map_err(|err| err.to_string());
                         app.send_digit(digit, &mut sender);

@@ -34,7 +34,7 @@ pub fn build_title(filter: Option<&str>, count: usize) -> String {
 /// Build the static help text.
 pub fn build_help(count: usize) -> String {
     format!(
-        "procs: {} | up/down select | 1-9 send signal | r refresh | q quit",
+        "procs: {} | ↑/↓ select | 1-9: send kill signal 1-9 | r: refresh | q: quit",
         count
     )
 }
@@ -44,7 +44,7 @@ pub fn build_footer(help: &str, status: &str) -> String {
     if status.is_empty() {
         help.to_string()
     } else {
-        format!("{}  -  {}", help, status)
+        format!("{}  —  {}", help, status)
     }
 }
 
@@ -144,7 +144,7 @@ mod tests {
     #[test]
     fn build_footer_handles_empty_and_non_empty_status() {
         assert_eq!(build_footer("help", ""), "help");
-        assert_eq!(build_footer("help", "ok"), "help  -  ok");
+        assert_eq!(build_footer("help", "ok"), "help  —  ok");
     }
 
     #[test]
