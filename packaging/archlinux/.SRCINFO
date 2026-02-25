@@ -1,0 +1,15 @@
+pkgbase = psn-git
+	pkgdesc = Terminal UI for process status navigation and control
+	pkgver = 0.0.0.r0.g7c29020
+	pkgrel = 1
+	url = https://github.com/l5yth/psn
+	arch = x86_64
+	license = Apache
+	makedepends = cargo
+	makedepends = git
+	depends = systemd
+	options = !debug
+	source = git+https://github.com/l5yth/psn.git
+	sha256sums = SKIP
+
+pkgname = psn-git

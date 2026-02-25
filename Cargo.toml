@@ -1,0 +1,22 @@
+# Copyright (c) 2026 l5yth
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "psn"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "Terminal UI for process status navigation and control"
+readme = "README.md"
+repository = "https://github.com/l5yth/psn"
+homepage = "https://github.com/l5yth/psn"
+keywords = ["process", "top", "tui", "linux"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+anyhow = "1"
+crossterm = "0.29"
+ratatui = "0.30"
+sysinfo = "0.38"
+nix = { version = "0.31", default-features = false, features = ["signal"] }
+users = "0.11"

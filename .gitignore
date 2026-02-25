@@ -1,0 +1,11 @@
+# Copyright (c) 2026 l5yth
+# SPDX-License-Identifier: Apache-2.0
+
+/target
+
+# Packaging build artifacts
+/packaging/archlinux/*.pkg.tar.*
+/packaging/archlinux/src/
+/packaging/archlinux/pkg/
+/packaging/archlinux/psn/
+/packaging/gentoo/**/files/

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE pkgmetadata SYSTEM "https://www.gentoo.org/dtd/metadata.dtd">
+<pkgmetadata>
+  <maintainer type="person">
+    <email>ebuild@l5y.tech</email>
+    <name>l5yth</name>
+  </maintainer>
+  <upstream>
+    <homepage>https://github.com/l5yth/psn</homepage>
+    <remote-id type="github">l5yth/psn</remote-id>
+  </upstream>
+  <longdescription>
+    psn is a Rust terminal UI for viewing ps (process stati) and terminating them.
+
+  </longdescription>
+</pkgmetadata>
