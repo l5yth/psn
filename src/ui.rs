@@ -18,7 +18,7 @@
 
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table},
+    widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, Wrap},
 };
 
 use crate::{app::App, process::status_dot_color};
@@ -108,6 +108,40 @@ pub fn render(frame: &mut Frame<'_>, app: &mut App) {
         Paragraph::new(footer).style(Style::default().fg(Color::DarkGray)),
         chunks[1],
     );
+
+    if let Some(prompt) = app.confirmation_prompt() {
+        let modal = centered_rect(80, 5, size);
+        frame.render_widget(Clear, modal);
+        frame.render_widget(
+            Paragraph::new(prompt)
+                .block(Block::default().borders(Borders::ALL).title("Confirm"))
+                .alignment(Alignment::Center)
+                .wrap(Wrap { trim: true }),
+            modal,
+        );
+    }
+}
+
+fn centered_rect(width_percent: u16, height: u16, area: Rect) -> Rect {
+    let vertical = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(0),
+            Constraint::Length(height),
+            Constraint::Min(0),
+        ])
+        .split(area);
+
+    let horizontal = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - width_percent) / 2),
+            Constraint::Percentage(width_percent),
+            Constraint::Percentage((100 - width_percent) / 2),
+        ])
+        .split(vertical[1]);
+
+    horizontal[1]
 }
 
 #[cfg(test)]
@@ -168,5 +202,29 @@ mod tests {
 
         assert!(text.contains("process status - filter: \"psn\""));
         assert!(text.contains("processes: 1"));
+    }
+
+    #[test]
+    fn render_draws_confirmation_overlay_when_pending() {
+        let backend = TestBackend::new(120, 20);
+        let mut terminal = Terminal::new(backend).expect("terminal must initialize");
+        let mut app = App::with_rows(Some("psn".to_string()), vec![sample_row()]);
+        app.begin_signal_confirmation(1);
+
+        terminal
+            .draw(|frame| render(frame, &mut app))
+            .expect("render should succeed");
+
+        let backend = terminal.backend();
+        let buffer = backend.buffer().clone();
+        let text: String = buffer
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<Vec<_>>()
+            .join("");
+
+        assert!(text.contains("Confirm"));
+        assert!(text.contains("Confirm sending SIGHUP (1)"));
     }
 }

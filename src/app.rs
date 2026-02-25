@@ -34,6 +34,21 @@ pub struct App {
     pub table_state: TableState,
     /// Footer status message.
     pub status: String,
+    /// Pending signal confirmation modal state.
+    pub pending_confirmation: Option<SignalConfirmation>,
+}
+
+/// Pending signal action that requires user confirmation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SignalConfirmation {
+    /// Original 1-9 key entered by the user.
+    pub digit: u8,
+    /// Resolved Unix signal for `digit`.
+    pub signal: Signal,
+    /// Target process id.
+    pub pid: i32,
+    /// Target process name.
+    pub process_name: String,
 }
 
 impl App {
@@ -47,6 +62,7 @@ impl App {
             rows,
             table_state,
             status: String::new(),
+            pending_confirmation: None,
         }
     }
 
@@ -160,5 +176,64 @@ impl App {
                 self.status = format!("failed to signal pid {}: {}", row.pid, err);
             }
         }
+    }
+
+    /// Prepare a confirmation modal for a digit-mapped signal.
+    pub fn begin_signal_confirmation(&mut self, digit: u8) {
+        let signal = match signal_from_digit(digit) {
+            Some(value) => value,
+            None => return,
+        };
+
+        let selected = match self.table_state.selected() {
+            Some(value) => value,
+            None => return,
+        };
+
+        let row = match self.rows.get(selected) {
+            Some(value) => value,
+            None => return,
+        };
+
+        self.pending_confirmation = Some(SignalConfirmation {
+            digit,
+            signal,
+            pid: row.pid,
+            process_name: row.name.clone(),
+        });
+    }
+
+    /// Cancel any active signal confirmation modal.
+    pub fn cancel_signal_confirmation(&mut self) {
+        self.pending_confirmation = None;
+    }
+
+    /// Confirm and execute a pending signal action.
+    pub fn confirm_signal(&mut self, sender: &mut dyn FnMut(i32, Signal) -> Result<(), String>) {
+        let Some(pending) = self.pending_confirmation.take() else {
+            return;
+        };
+
+        match sender(pending.pid, pending.signal) {
+            Ok(()) => {
+                self.status = format!(
+                    "sent {:?} ({}) to pid {}",
+                    pending.signal, pending.digit, pending.pid
+                );
+            }
+            Err(err) => {
+                self.status = format!("failed to signal pid {}: {}", pending.pid, err);
+            }
+        }
+    }
+
+    /// Build the confirmation prompt text for the current pending action.
+    pub fn confirmation_prompt(&self) -> Option<String> {
+        self.pending_confirmation.as_ref().map(|pending| {
+            format!(
+                "Confirm sending {:?} ({}) to process {} ({}) (y/n)",
+                pending.signal, pending.digit, pending.process_name, pending.pid
+            )
+        })
     }
 }

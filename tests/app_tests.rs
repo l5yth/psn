@@ -124,6 +124,60 @@ fn send_digit_updates_success_status() {
 }
 
 #[test]
+fn begin_signal_confirmation_sets_pending_prompt() {
+    let mut app = App::with_rows(None, vec![row(123)]);
+
+    app.begin_signal_confirmation(1);
+
+    let prompt = app.confirmation_prompt().expect("prompt should exist");
+    assert!(prompt.contains("Confirm sending SIGHUP (1)"));
+    assert!(prompt.contains("process p123 (123)"));
+}
+
+#[test]
+fn begin_signal_confirmation_ignores_invalid_digit() {
+    let mut app = App::with_rows(None, vec![row(1)]);
+    app.begin_signal_confirmation(0);
+    assert!(app.pending_confirmation.is_none());
+}
+
+#[test]
+fn cancel_signal_confirmation_clears_pending_state() {
+    let mut app = App::with_rows(None, vec![row(1)]);
+    app.begin_signal_confirmation(1);
+    app.cancel_signal_confirmation();
+    assert!(app.pending_confirmation.is_none());
+}
+
+#[test]
+fn confirm_signal_updates_success_status_and_clears_pending() {
+    let mut app = App::with_rows(None, vec![row(123)]);
+    app.begin_signal_confirmation(9);
+    let mut sender = |pid, signal| {
+        assert_eq!(pid, 123);
+        assert_eq!(signal, Signal::SIGKILL);
+        Ok(())
+    };
+
+    app.confirm_signal(&mut sender);
+
+    assert!(app.status.contains("sent"));
+    assert!(app.pending_confirmation.is_none());
+}
+
+#[test]
+fn confirm_signal_updates_failure_status_and_clears_pending() {
+    let mut app = App::with_rows(None, vec![row(123)]);
+    app.begin_signal_confirmation(1);
+    let mut sender = |_, _| Err("denied".to_string());
+
+    app.confirm_signal(&mut sender);
+
+    assert!(app.status.contains("failed"));
+    assert!(app.pending_confirmation.is_none());
+}
+
+#[test]
 fn send_digit_updates_failure_status() {
     let mut app = App::with_rows(None, vec![row(456)]);
     let mut sender = |_, _| Err("denied".to_string());

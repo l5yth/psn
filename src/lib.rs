@@ -56,6 +56,31 @@ pub fn run() -> Result<()> {
                     continue;
                 }
 
+                if app.pending_confirmation.is_some() {
+                    match key.code {
+                        KeyCode::Char('y') | KeyCode::Char('Y') => {
+                            let mut sender = |pid, sig| {
+                                signal::send_signal(pid, sig).map_err(|err| err.to_string())
+                            };
+                            app.confirm_signal(&mut sender);
+                            let selected_before_refresh = app.table_state.selected().unwrap_or(0);
+                            app.refresh_preserving_status(process::refresh_rows(
+                                &mut sys,
+                                app.filter(),
+                            ));
+                            if !app.rows.is_empty() {
+                                app.table_state
+                                    .select(Some(min(selected_before_refresh, app.rows.len() - 1)));
+                            }
+                        }
+                        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                            app.cancel_signal_confirmation();
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
                 match key.code {
                     KeyCode::Char('q') => break,
                     KeyCode::Char('r') => {
@@ -70,19 +95,7 @@ pub fn run() -> Result<()> {
                         if !(1..=9).contains(&digit) {
                             continue;
                         }
-
-                        let mut sender =
-                            |pid, sig| signal::send_signal(pid, sig).map_err(|err| err.to_string());
-                        app.send_digit(digit, &mut sender);
-                        let selected_before_refresh = app.table_state.selected().unwrap_or(0);
-                        app.refresh_preserving_status(process::refresh_rows(
-                            &mut sys,
-                            app.filter(),
-                        ));
-                        if !app.rows.is_empty() {
-                            app.table_state
-                                .select(Some(min(selected_before_refresh, app.rows.len() - 1)));
-                        }
+                        app.begin_signal_confirmation(digit);
                     }
                     _ => {}
                 }
