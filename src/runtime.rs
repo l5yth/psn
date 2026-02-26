@@ -52,6 +52,15 @@ pub enum Action {
     Noop,
 }
 
+/// Outcome of applying an action to application state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ActionResult {
+    /// Whether the event loop should exit after this action.
+    pub should_quit: bool,
+    /// Whether UI should be redrawn after this action.
+    pub needs_redraw: bool,
+}
+
 /// Map a key press to a runtime action.
 pub fn map_key_event_to_action(key_code: KeyCode, pending_confirmation: bool) -> Action {
     if pending_confirmation {
@@ -89,49 +98,88 @@ pub fn apply_action(
     action: Action,
     refresh_rows: &mut dyn FnMut() -> Vec<ProcRow>,
     sender: &mut dyn FnMut(i32, Signal) -> Result<(), String>,
-) -> bool {
+) -> ActionResult {
     match action {
-        Action::Quit => true,
+        Action::Quit => ActionResult {
+            should_quit: true,
+            needs_redraw: false,
+        },
         Action::Refresh => {
             app.refresh(refresh_rows());
-            false
+            ActionResult {
+                should_quit: false,
+                needs_redraw: true,
+            }
         }
         Action::MoveUp => {
+            let selected_before = app.table_state.selected();
             app.move_up();
-            false
+            ActionResult {
+                should_quit: false,
+                needs_redraw: app.table_state.selected() != selected_before,
+            }
         }
         Action::MoveDown => {
+            let selected_before = app.table_state.selected();
             app.move_down();
-            false
+            ActionResult {
+                should_quit: false,
+                needs_redraw: app.table_state.selected() != selected_before,
+            }
         }
         Action::PageUp => {
+            let selected_before = app.table_state.selected();
             app.page_up(PAGE_STEP);
-            false
+            ActionResult {
+                should_quit: false,
+                needs_redraw: app.table_state.selected() != selected_before,
+            }
         }
         Action::PageDown => {
+            let selected_before = app.table_state.selected();
             app.page_down(PAGE_STEP);
-            false
+            ActionResult {
+                should_quit: false,
+                needs_redraw: app.table_state.selected() != selected_before,
+            }
         }
         Action::BeginSignalConfirmation(digit) => {
+            let had_pending = app.pending_confirmation.is_some();
             app.begin_signal_confirmation(digit);
-            false
+            ActionResult {
+                should_quit: false,
+                needs_redraw: app.pending_confirmation.is_some() != had_pending,
+            }
         }
         Action::ConfirmPendingSignal => {
             refresh_with_selection_preserved(app, refresh_rows);
             if !app.pending_target_matches_current_rows() {
                 app.abort_pending_target_changed();
-                return false;
+                return ActionResult {
+                    should_quit: false,
+                    needs_redraw: true,
+                };
             }
 
             app.confirm_signal(sender);
             refresh_with_selection_preserved(app, refresh_rows);
-            false
+            ActionResult {
+                should_quit: false,
+                needs_redraw: true,
+            }
         }
         Action::CancelPendingSignal => {
+            let had_pending = app.pending_confirmation.is_some();
             app.cancel_signal_confirmation();
-            false
+            ActionResult {
+                should_quit: false,
+                needs_redraw: had_pending,
+            }
         }
-        Action::Noop => false,
+        Action::Noop => ActionResult {
+            should_quit: false,
+            needs_redraw: false,
+        },
     }
 }
 
@@ -147,16 +195,19 @@ fn refresh_with_selection_preserved(app: &mut App, refresh_rows: &mut dyn FnMut(
 
 #[cfg(test)]
 mod tests {
-    use super::{Action, apply_action, map_key_event_to_action};
+    use super::{Action, ActionResult, apply_action, map_key_event_to_action};
     use crate::{app::App, model::ProcRow};
     use crossterm::event::KeyCode;
     use nix::sys::signal::Signal;
+    use std::sync::Arc;
     use sysinfo::ProcessStatus;
 
     fn row(pid: i32, name: &str) -> ProcRow {
         ProcRow {
             pid,
-            user: "u".to_string(),
+            ppid: None,
+            ancestor_chain: Vec::new(),
+            user: Arc::from("u"),
             status: ProcessStatus::Run,
             name: name.to_string(),
             cmd: format!("/bin/{name}"),
@@ -231,12 +282,18 @@ mod tests {
             Ok(())
         };
 
-        assert!(!apply_action(
-            &mut app,
-            Action::ConfirmPendingSignal,
-            &mut refresh,
-            &mut sender
-        ));
+        assert_eq!(
+            apply_action(
+                &mut app,
+                Action::ConfirmPendingSignal,
+                &mut refresh,
+                &mut sender
+            ),
+            ActionResult {
+                should_quit: false,
+                needs_redraw: true
+            }
+        );
         assert!(sent);
         assert_eq!(refresh_calls, 2);
         assert!(app.pending_confirmation.is_none());
@@ -249,12 +306,18 @@ mod tests {
         let mut refresh = || vec![row(11, "foo")];
         let mut sender = |_: i32, _: Signal| Ok(());
 
-        assert!(!apply_action(
-            &mut app,
-            Action::CancelPendingSignal,
-            &mut refresh,
-            &mut sender
-        ));
+        assert_eq!(
+            apply_action(
+                &mut app,
+                Action::CancelPendingSignal,
+                &mut refresh,
+                &mut sender
+            ),
+            ActionResult {
+                should_quit: false,
+                needs_redraw: true
+            }
+        );
         assert!(app.pending_confirmation.is_none());
     }
 
@@ -263,12 +326,13 @@ mod tests {
         let mut app = App::with_rows(None, vec![row(11, "foo")]);
         let mut refresh = || vec![row(11, "foo")];
         let mut sender = |_: i32, _: Signal| Ok(());
-        assert!(apply_action(
-            &mut app,
-            Action::Quit,
-            &mut refresh,
-            &mut sender
-        ));
+        assert_eq!(
+            apply_action(&mut app, Action::Quit, &mut refresh, &mut sender),
+            ActionResult {
+                should_quit: true,
+                needs_redraw: false
+            }
+        );
     }
 
     #[test]
@@ -276,12 +340,13 @@ mod tests {
         let mut app = App::with_rows(None, vec![row(11, "foo")]);
         let mut refresh = || vec![row(22, "bar")];
         let mut sender = |_: i32, _: Signal| Ok(());
-        assert!(!apply_action(
-            &mut app,
-            Action::Refresh,
-            &mut refresh,
-            &mut sender
-        ));
+        assert_eq!(
+            apply_action(&mut app, Action::Refresh, &mut refresh, &mut sender),
+            ActionResult {
+                should_quit: false,
+                needs_redraw: true
+            }
+        );
         assert_eq!(app.rows[0].pid, 22);
     }
 
@@ -291,20 +356,22 @@ mod tests {
         let mut refresh = || vec![row(11, "foo"), row(22, "bar"), row(33, "baz")];
         let mut sender = |_: i32, _: Signal| Ok(());
 
-        assert!(!apply_action(
-            &mut app,
-            Action::MoveDown,
-            &mut refresh,
-            &mut sender
-        ));
+        assert_eq!(
+            apply_action(&mut app, Action::MoveDown, &mut refresh, &mut sender),
+            ActionResult {
+                should_quit: false,
+                needs_redraw: true
+            }
+        );
         assert_eq!(app.table_state.selected(), Some(1));
 
-        assert!(!apply_action(
-            &mut app,
-            Action::MoveUp,
-            &mut refresh,
-            &mut sender
-        ));
+        assert_eq!(
+            apply_action(&mut app, Action::MoveUp, &mut refresh, &mut sender),
+            ActionResult {
+                should_quit: false,
+                needs_redraw: true
+            }
+        );
         assert_eq!(app.table_state.selected(), Some(0));
     }
 
@@ -315,20 +382,22 @@ mod tests {
         let mut refresh = || rows.clone();
         let mut sender = |_: i32, _: Signal| Ok(());
 
-        assert!(!apply_action(
-            &mut app,
-            Action::PageDown,
-            &mut refresh,
-            &mut sender
-        ));
+        assert_eq!(
+            apply_action(&mut app, Action::PageDown, &mut refresh, &mut sender),
+            ActionResult {
+                should_quit: false,
+                needs_redraw: true
+            }
+        );
         assert_eq!(app.table_state.selected(), Some(10));
 
-        assert!(!apply_action(
-            &mut app,
-            Action::PageUp,
-            &mut refresh,
-            &mut sender
-        ));
+        assert_eq!(
+            apply_action(&mut app, Action::PageUp, &mut refresh, &mut sender),
+            ActionResult {
+                should_quit: false,
+                needs_redraw: true
+            }
+        );
         assert_eq!(app.table_state.selected(), Some(0));
     }
 
@@ -338,12 +407,18 @@ mod tests {
         let mut refresh = || vec![row(11, "foo")];
         let mut sender = |_: i32, _: Signal| Ok(());
 
-        assert!(!apply_action(
-            &mut app,
-            Action::BeginSignalConfirmation(1),
-            &mut refresh,
-            &mut sender
-        ));
+        assert_eq!(
+            apply_action(
+                &mut app,
+                Action::BeginSignalConfirmation(1),
+                &mut refresh,
+                &mut sender
+            ),
+            ActionResult {
+                should_quit: false,
+                needs_redraw: true
+            }
+        );
         assert!(app.pending_confirmation.is_some());
     }
 
@@ -354,12 +429,18 @@ mod tests {
         let mut refresh = || vec![row(22, "bar")];
         let mut sender = |_: i32, _: Signal| Ok(());
 
-        assert!(!apply_action(
-            &mut app,
-            Action::ConfirmPendingSignal,
-            &mut refresh,
-            &mut sender
-        ));
+        assert_eq!(
+            apply_action(
+                &mut app,
+                Action::ConfirmPendingSignal,
+                &mut refresh,
+                &mut sender
+            ),
+            ActionResult {
+                should_quit: false,
+                needs_redraw: true
+            }
+        );
         assert!(app.status.contains("aborted"));
     }
 
@@ -369,12 +450,13 @@ mod tests {
         let mut refresh = || vec![row(11, "foo")];
         let mut sender = |_: i32, _: Signal| Ok(());
         let selected = app.table_state.selected();
-        assert!(!apply_action(
-            &mut app,
-            Action::Noop,
-            &mut refresh,
-            &mut sender
-        ));
+        assert_eq!(
+            apply_action(&mut app, Action::Noop, &mut refresh, &mut sender),
+            ActionResult {
+                should_quit: false,
+                needs_redraw: false
+            }
+        );
         assert_eq!(app.table_state.selected(), selected);
     }
 }

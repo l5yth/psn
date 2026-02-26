@@ -50,23 +50,37 @@ pub fn run(filter: Option<String>, regex_mode: bool, user_only: bool) -> Result<
     let mut app = App::with_rows(filter, initial_rows);
 
     let run_result = (|| -> Result<()> {
+        let mut needs_redraw = true;
         loop {
-            terminal.draw(|frame| ui::render(frame, &mut app))?;
+            if needs_redraw {
+                terminal.draw(|frame| ui::render(frame, &mut app))?;
+                needs_redraw = false;
+            }
 
-            if event::poll(Duration::from_millis(60))?
-                && let Event::Key(key) = event::read()?
-            {
-                if key.kind != KeyEventKind::Press {
-                    continue;
-                }
+            if event::poll(Duration::from_millis(250))? {
+                match event::read()? {
+                    Event::Resize(_, _) => {
+                        needs_redraw = true;
+                    }
+                    Event::Key(key) => {
+                        if key.kind != KeyEventKind::Press {
+                            continue;
+                        }
 
-                let action = map_key_event_to_action(key.code, app.pending_confirmation.is_some());
-                let mut refresh_rows =
-                    || process::refresh_rows(&mut sys, compiled_filter.as_ref(), user_only);
-                let mut sender =
-                    |pid, sig| signal::send_signal(pid, sig).map_err(|err| err.to_string());
-                if apply_action(&mut app, action, &mut refresh_rows, &mut sender) {
-                    break;
+                        let action =
+                            map_key_event_to_action(key.code, app.pending_confirmation.is_some());
+                        let mut refresh_rows =
+                            || process::refresh_rows(&mut sys, compiled_filter.as_ref(), user_only);
+                        let mut sender =
+                            |pid, sig| signal::send_signal(pid, sig).map_err(|err| err.to_string());
+                        let outcome =
+                            apply_action(&mut app, action, &mut refresh_rows, &mut sender);
+                        if outcome.should_quit {
+                            break;
+                        }
+                        needs_redraw |= outcome.needs_redraw;
+                    }
+                    _ => {}
                 }
             }
         }

@@ -16,6 +16,8 @@
 
 //! TUI rendering helpers.
 
+use std::collections::HashMap;
+
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, Wrap},
@@ -66,13 +68,16 @@ pub fn render(frame: &mut Frame<'_>, app: &mut App) {
     ])
     .style(Style::default().add_modifier(Modifier::BOLD));
 
-    let body = app.rows.iter().map(|row| {
+    let tree_order = build_tree_order(&app.rows);
+    let body = tree_order.into_iter().map(|(idx, prefix)| {
+        let row = &app.rows[idx];
+        let tree_name = format!("{prefix}{}", row.name);
         Row::new([
             Cell::from("●").style(Style::default().fg(status_dot_color(row.status))),
             Cell::from(row.pid.to_string()),
-            Cell::from(row.name.as_str()),
+            Cell::from(tree_name),
             Cell::from(format!("{:?}", row.status)),
-            Cell::from(row.user.as_str()),
+            Cell::from(row.user.as_ref()),
             Cell::from(row.cmd.as_str()),
         ])
     });
@@ -144,17 +149,124 @@ fn centered_rect(width_percent: u16, height: u16, area: Rect) -> Rect {
     horizontal[1]
 }
 
+fn build_tree_order(rows: &[crate::model::ProcRow]) -> Vec<(usize, String)> {
+    let mut pid_to_index: HashMap<i32, usize> = HashMap::new();
+    for (idx, row) in rows.iter().enumerate() {
+        pid_to_index.insert(row.pid, idx);
+    }
+
+    let mut roots: Vec<usize> = Vec::new();
+    let mut children: HashMap<i32, Vec<usize>> = HashMap::new();
+    for (idx, row) in rows.iter().enumerate() {
+        if let Some(parent_pid) = nearest_visible_ancestor(&row.ancestor_chain, &pid_to_index) {
+            children.entry(parent_pid).or_default().push(idx);
+            continue;
+        }
+        roots.push(idx);
+    }
+
+    sort_indices(&mut roots, rows);
+    for child_group in children.values_mut() {
+        sort_indices(child_group, rows);
+    }
+
+    let mut ordered: Vec<(usize, String)> = Vec::with_capacity(rows.len());
+    for (root_pos, root) in roots.iter().enumerate() {
+        let is_last_root = root_pos + 1 == roots.len();
+        walk_tree(
+            *root,
+            rows,
+            &children,
+            &mut ordered,
+            &[],
+            is_last_root,
+            true,
+        );
+    }
+    ordered
+}
+
+fn nearest_visible_ancestor(ancestor_chain: &[i32], visible: &HashMap<i32, usize>) -> Option<i32> {
+    for candidate in ancestor_chain {
+        if visible.contains_key(&candidate) {
+            return Some(*candidate);
+        }
+    }
+    None
+}
+
+fn walk_tree(
+    idx: usize,
+    rows: &[crate::model::ProcRow],
+    children: &HashMap<i32, Vec<usize>>,
+    ordered: &mut Vec<(usize, String)>,
+    ancestor_has_next: &[bool],
+    is_last: bool,
+    is_root: bool,
+) {
+    let mut prefix = String::new();
+    for has_next in ancestor_has_next {
+        if *has_next {
+            prefix.push_str("│ ");
+        } else {
+            prefix.push_str("  ");
+        }
+    }
+
+    if !is_root {
+        if is_last {
+            prefix.push_str("└─");
+        } else {
+            prefix.push_str("├─");
+        }
+    }
+
+    ordered.push((idx, prefix));
+    if let Some(next) = children.get(&rows[idx].pid) {
+        for (child_pos, child) in next.iter().enumerate() {
+            let child_is_last = child_pos + 1 == next.len();
+            let mut next_ancestors = ancestor_has_next.to_vec();
+            if !is_root {
+                next_ancestors.push(!is_last);
+            }
+            walk_tree(
+                *child,
+                rows,
+                children,
+                ordered,
+                &next_ancestors,
+                child_is_last,
+                false,
+            );
+        }
+    }
+}
+
+fn sort_indices(indices: &mut [usize], rows: &[crate::model::ProcRow]) {
+    indices.sort_by(|left, right| {
+        crate::process::status_priority(rows[*left].status)
+            .cmp(&crate::process::status_priority(rows[*right].status))
+            .then(rows[*left].pid.cmp(&rows[*right].pid))
+            .then(rows[*left].name.cmp(&rows[*right].name))
+            .then(rows[*left].user.as_ref().cmp(rows[*right].user.as_ref()))
+            .then(rows[*left].cmd.cmp(&rows[*right].cmd))
+    });
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{build_footer, build_help, build_title, render};
+    use super::{build_footer, build_help, build_title, build_tree_order, render};
     use crate::{app::App, model::ProcRow};
     use ratatui::{Terminal, backend::TestBackend};
+    use std::sync::Arc;
     use sysinfo::ProcessStatus;
 
     fn sample_row() -> ProcRow {
         ProcRow {
             pid: 7,
-            user: "alice".to_string(),
+            ppid: None,
+            ancestor_chain: Vec::new(),
+            user: Arc::from("alice"),
             status: ProcessStatus::Run,
             name: "psn".to_string(),
             cmd: "psn --demo".to_string(),
@@ -226,5 +338,179 @@ mod tests {
 
         assert!(text.contains("send signal"));
         assert!(text.contains("confirm sending SIGHUP (1)"));
+    }
+
+    #[test]
+    fn build_tree_order_nests_children_under_parent() {
+        let rows = vec![
+            ProcRow {
+                pid: 1,
+                ppid: None,
+                ancestor_chain: Vec::new(),
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                name: "parent".to_string(),
+                cmd: "/bin/parent".to_string(),
+            },
+            ProcRow {
+                pid: 2,
+                ppid: Some(1),
+                ancestor_chain: vec![1],
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                name: "child".to_string(),
+                cmd: "/bin/child".to_string(),
+            },
+            ProcRow {
+                pid: 3,
+                ppid: Some(2),
+                ancestor_chain: vec![2, 1],
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                name: "grandchild".to_string(),
+                cmd: "/bin/grandchild".to_string(),
+            },
+        ];
+        let order = build_tree_order(&rows);
+        assert_eq!(
+            order,
+            vec![
+                (0, "".to_string()),
+                (1, "└─".to_string()),
+                (2, "  └─".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn build_tree_order_draws_branch_segments() {
+        let rows = vec![
+            ProcRow {
+                pid: 1,
+                ppid: None,
+                ancestor_chain: Vec::new(),
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                name: "parent".to_string(),
+                cmd: "/bin/parent".to_string(),
+            },
+            ProcRow {
+                pid: 2,
+                ppid: Some(1),
+                ancestor_chain: vec![1],
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                name: "child-a".to_string(),
+                cmd: "/bin/child-a".to_string(),
+            },
+            ProcRow {
+                pid: 3,
+                ppid: Some(1),
+                ancestor_chain: vec![1],
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                name: "child-b".to_string(),
+                cmd: "/bin/child-b".to_string(),
+            },
+            ProcRow {
+                pid: 4,
+                ppid: Some(2),
+                ancestor_chain: vec![2, 1],
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                name: "grandchild".to_string(),
+                cmd: "/bin/grandchild".to_string(),
+            },
+        ];
+
+        let order = build_tree_order(&rows);
+        assert_eq!(
+            order,
+            vec![
+                (0, "".to_string()),
+                (1, "├─".to_string()),
+                (3, "│ └─".to_string()),
+                (2, "└─".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn build_tree_order_sorts_siblings_by_status_then_pid() {
+        let rows = vec![
+            ProcRow {
+                pid: 1,
+                ppid: None,
+                ancestor_chain: Vec::new(),
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                name: "parent".to_string(),
+                cmd: "/bin/parent".to_string(),
+            },
+            ProcRow {
+                pid: 30,
+                ppid: Some(1),
+                ancestor_chain: vec![1],
+                user: Arc::from("u"),
+                status: ProcessStatus::Sleep,
+                name: "child-sleep".to_string(),
+                cmd: "/bin/child-sleep".to_string(),
+            },
+            ProcRow {
+                pid: 40,
+                ppid: Some(1),
+                ancestor_chain: vec![1],
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                name: "child-run-high".to_string(),
+                cmd: "/bin/child-run-high".to_string(),
+            },
+            ProcRow {
+                pid: 20,
+                ppid: Some(1),
+                ancestor_chain: vec![1],
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                name: "child-run-low".to_string(),
+                cmd: "/bin/child-run-low".to_string(),
+            },
+        ];
+
+        let order = build_tree_order(&rows);
+        assert_eq!(
+            order,
+            vec![
+                (0, "".to_string()),
+                (3, "├─".to_string()),
+                (2, "├─".to_string()),
+                (1, "└─".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn build_tree_order_reattaches_to_nearest_visible_ancestor() {
+        let rows = vec![
+            ProcRow {
+                pid: 1,
+                ppid: None,
+                ancestor_chain: Vec::new(),
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                name: "parent".to_string(),
+                cmd: "/bin/parent".to_string(),
+            },
+            ProcRow {
+                pid: 3,
+                ppid: Some(2),
+                ancestor_chain: vec![2, 1],
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                name: "grandchild".to_string(),
+                cmd: "/bin/grandchild".to_string(),
+            },
+        ];
+        let order = build_tree_order(&rows);
+        assert_eq!(order, vec![(0, "".to_string()), (1, "└─".to_string())]);
     }
 }

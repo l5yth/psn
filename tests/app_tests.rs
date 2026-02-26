@@ -16,12 +16,15 @@
 
 use nix::sys::signal::Signal;
 use psn::{app::App, model::ProcRow};
+use std::sync::Arc;
 use sysinfo::ProcessStatus;
 
 fn row(pid: i32) -> ProcRow {
     ProcRow {
         pid,
-        user: "u".to_string(),
+        ppid: None,
+        ancestor_chain: Vec::new(),
+        user: Arc::from("u"),
         status: ProcessStatus::Run,
         name: format!("p{pid}"),
         cmd: format!("/bin/p{pid}"),

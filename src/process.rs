@@ -16,7 +16,12 @@
 
 //! Process collection, mapping, filtering, and ordering.
 
-use std::{collections::HashMap, ffi::OsString, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    ffi::OsString,
+    path::Path,
+    sync::Arc,
+};
 
 use anyhow::{Result, bail};
 use ratatui::style::Color;
@@ -176,13 +181,15 @@ pub fn status_dot_color(status: ProcessStatus) -> Color {
     }
 }
 
-/// Sort rows by status priority, process name, and pid.
+/// Sort rows by status priority, pid, name, user, then command.
 pub fn sort_rows(rows: &mut [ProcRow]) {
     rows.sort_by(|a, b| {
         status_priority(a.status)
             .cmp(&status_priority(b.status))
-            .then(a.name.cmp(&b.name))
             .then(a.pid.cmp(&b.pid))
+            .then(a.name.cmp(&b.name))
+            .then(a.user.as_ref().cmp(b.user.as_ref()))
+            .then(a.cmd.cmp(&b.cmd))
     });
 }
 
@@ -202,7 +209,17 @@ pub fn refresh_rows(
     } else {
         None
     };
-    let mut user_cache: HashMap<String, String> = HashMap::new();
+    let pid_to_ppid_all: HashMap<i32, Option<i32>> = sys
+        .processes()
+        .values()
+        .map(|process| {
+            (
+                process.pid().as_u32() as i32,
+                process.parent().map(|value| value.as_u32() as i32),
+            )
+        })
+        .collect();
+    let mut user_cache: HashMap<String, Arc<str>> = HashMap::new();
 
     let mut rows: Vec<ProcRow> = sys
         .processes()
@@ -216,6 +233,7 @@ pub fn refresh_rows(
         })
         .map(|process| {
             let pid = process.pid().as_u32() as i32;
+            let ppid = process.parent().map(|value| value.as_u32() as i32);
             let user = resolve_user_cached(process.user_id(), &mut user_cache);
             let status = process.status();
             let name = process.name().to_string_lossy().to_string();
@@ -223,6 +241,8 @@ pub fn refresh_rows(
 
             ProcRow {
                 pid,
+                ppid,
+                ancestor_chain: build_ancestor_chain(ppid, &pid_to_ppid_all),
                 user,
                 status,
                 name,
@@ -236,11 +256,30 @@ pub fn refresh_rows(
     rows
 }
 
+fn build_ancestor_chain(
+    ppid: Option<i32>,
+    pid_to_ppid_all: &HashMap<i32, Option<i32>>,
+) -> Vec<i32> {
+    let mut chain: Vec<i32> = Vec::new();
+    let mut seen: HashSet<i32> = HashSet::new();
+    let mut current = ppid;
+
+    while let Some(pid) = current {
+        if !seen.insert(pid) {
+            break;
+        }
+        chain.push(pid);
+        current = pid_to_ppid_all.get(&pid).copied().flatten();
+    }
+
+    chain
+}
+
 /// Resolve user display text with per-refresh memoization to avoid repeated
 /// uid lookups for processes owned by the same user.
-fn resolve_user_cached(uid: Option<&Uid>, cache: &mut HashMap<String, String>) -> String {
+fn resolve_user_cached(uid: Option<&Uid>, cache: &mut HashMap<String, Arc<str>>) -> Arc<str> {
     let Some(uid_value) = uid else {
-        return "?".to_string();
+        return Arc::<str>::from("?");
     };
 
     let uid_key = uid_value.to_string();
@@ -248,7 +287,7 @@ fn resolve_user_cached(uid: Option<&Uid>, cache: &mut HashMap<String, String>) -
         return cached.clone();
     }
 
-    let resolved = to_user(Some(uid_value));
+    let resolved: Arc<str> = Arc::from(to_user(Some(uid_value)));
     cache.insert(uid_key, resolved.clone());
     resolved
 }
@@ -261,14 +300,16 @@ mod tests {
     };
     use crate::model::ProcRow;
     use ratatui::style::Color;
-    use std::collections::HashMap;
+    use std::{collections::HashMap, sync::Arc};
     use std::{ffi::OsString, path::Path};
     use sysinfo::{ProcessStatus, System, Uid};
 
     fn row(pid: i32, name: &str, status: ProcessStatus, cmd: &str) -> ProcRow {
         ProcRow {
             pid,
-            user: "u".to_string(),
+            ppid: None,
+            ancestor_chain: Vec::new(),
+            user: Arc::from("u"),
             status,
             name: name.to_string(),
             cmd: cmd.to_string(),
@@ -400,7 +441,7 @@ mod tests {
     }
 
     #[test]
-    fn sort_rows_uses_status_then_name_then_pid() {
+    fn sort_rows_uses_status_then_pid_then_name_user_cmd() {
         let mut rows = vec![
             row(30, "bbb", ProcessStatus::Sleep, "c1"),
             row(22, "aaa", ProcessStatus::Run, "c2"),
@@ -414,6 +455,45 @@ mod tests {
         assert_eq!(rows[1].pid, 22);
         assert_eq!(rows[2].pid, 30);
         assert_eq!(rows[3].pid, 11);
+    }
+
+    #[test]
+    fn sort_rows_uses_all_tie_breakers_in_order() {
+        let mut rows = vec![
+            ProcRow {
+                pid: 42,
+                ppid: None,
+                ancestor_chain: Vec::new(),
+                user: std::sync::Arc::from("z"),
+                status: ProcessStatus::Run,
+                name: "bbb".to_string(),
+                cmd: "z".to_string(),
+            },
+            ProcRow {
+                pid: 42,
+                ppid: None,
+                ancestor_chain: Vec::new(),
+                user: std::sync::Arc::from("a"),
+                status: ProcessStatus::Run,
+                name: "bbb".to_string(),
+                cmd: "x".to_string(),
+            },
+            ProcRow {
+                pid: 42,
+                ppid: None,
+                ancestor_chain: Vec::new(),
+                user: std::sync::Arc::from("a"),
+                status: ProcessStatus::Run,
+                name: "aaa".to_string(),
+                cmd: "y".to_string(),
+            },
+        ];
+
+        sort_rows(&mut rows);
+        assert_eq!(rows[0].name, "aaa");
+        assert_eq!(&*rows[1].user, "a");
+        assert_eq!(rows[1].cmd, "x");
+        assert_eq!(rows[2].cmd, "z");
     }
 
     #[test]
@@ -468,6 +548,6 @@ mod tests {
     #[test]
     fn resolve_user_cached_handles_missing_uid() {
         let mut cache = HashMap::new();
-        assert_eq!(resolve_user_cached(None, &mut cache), "?");
+        assert_eq!(&*resolve_user_cached(None, &mut cache), "?");
     }
 }
