@@ -17,6 +17,7 @@
 //! Core library for `psn`.
 
 pub mod app;
+pub mod cli;
 pub mod model;
 pub mod process;
 pub mod signal;
@@ -37,9 +38,7 @@ use sysinfo::System;
 use crate::{app::App, model::ProcRow};
 
 /// Run the interactive TUI application.
-pub fn run() -> Result<()> {
-    let filter = std::env::args().nth(1);
-
+pub fn run(filter: Option<String>) -> Result<()> {
     let mut terminal = setup_terminal()?;
     let mut sys = System::new_all();
     let initial_rows = process::refresh_rows(&mut sys, filter.as_deref());

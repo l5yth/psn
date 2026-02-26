@@ -15,8 +15,19 @@
 */
 
 use anyhow::Result;
+use psn::cli::{CliCommand, help_text, parse_args, version_text};
 
-/// Binary entry point. Delegates to the library runtime.
+/// Binary entry point. Delegates to CLI parsing and runtime.
 fn main() -> Result<()> {
-    psn::run()
+    match parse_args(std::env::args())? {
+        CliCommand::Help => {
+            println!("{}", help_text());
+            Ok(())
+        }
+        CliCommand::Version => {
+            println!("{}", version_text());
+            Ok(())
+        }
+        CliCommand::Run { filter } => psn::run(filter),
+    }
 }
