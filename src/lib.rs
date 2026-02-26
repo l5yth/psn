@@ -17,6 +17,7 @@
 //! Core library for `psn`.
 
 pub mod app;
+pub mod cli;
 pub mod model;
 pub mod process;
 pub mod signal;
@@ -37,12 +38,12 @@ use sysinfo::System;
 use crate::{app::App, model::ProcRow};
 
 /// Run the interactive TUI application.
-pub fn run() -> Result<()> {
-    let filter = std::env::args().nth(1);
+pub fn run(filter: Option<String>, regex_mode: bool, user_only: bool) -> Result<()> {
+    let compiled_filter = process::compile_filter(filter.clone(), regex_mode)?;
 
     let mut terminal = setup_terminal()?;
     let mut sys = System::new_all();
-    let initial_rows = process::refresh_rows(&mut sys, filter.as_deref());
+    let initial_rows = process::refresh_rows(&mut sys, compiled_filter.as_ref(), user_only);
     let mut app = App::with_rows(filter, initial_rows);
 
     let run_result = (|| -> Result<()> {
@@ -58,7 +59,7 @@ pub fn run() -> Result<()> {
 
                 if app.pending_confirmation.is_some() {
                     let mut refresh_rows =
-                        |filter: Option<String>| process::refresh_rows(&mut sys, filter.as_deref());
+                        || process::refresh_rows(&mut sys, compiled_filter.as_ref(), user_only);
                     let mut sender =
                         |pid, sig| signal::send_signal(pid, sig).map_err(|err| err.to_string());
                     if handle_pending_confirmation_input(
@@ -75,7 +76,11 @@ pub fn run() -> Result<()> {
                 match key.code {
                     KeyCode::Char('q') => break,
                     KeyCode::Char('r') => {
-                        app.refresh(process::refresh_rows(&mut sys, app.filter()));
+                        app.refresh(process::refresh_rows(
+                            &mut sys,
+                            compiled_filter.as_ref(),
+                            user_only,
+                        ));
                     }
                     KeyCode::Up => app.move_up(),
                     KeyCode::Down => app.move_down(),
@@ -103,13 +108,13 @@ pub fn run() -> Result<()> {
 fn handle_pending_confirmation_input(
     app: &mut App,
     key_code: KeyCode,
-    refresh_rows: &mut dyn FnMut(Option<String>) -> Vec<ProcRow>,
+    refresh_rows: &mut dyn FnMut() -> Vec<ProcRow>,
     sender: &mut dyn FnMut(i32, nix::sys::signal::Signal) -> Result<(), String>,
 ) -> bool {
     match key_code {
         KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
             let selected_before_refresh = app.table_state.selected().unwrap_or(0);
-            app.refresh_preserving_status(refresh_rows(app.filter.clone()));
+            app.refresh_preserving_status(refresh_rows());
             if !app.rows.is_empty() {
                 app.table_state
                     .select(Some(min(selected_before_refresh, app.rows.len() - 1)));
@@ -122,7 +127,7 @@ fn handle_pending_confirmation_input(
 
             app.confirm_signal(sender);
             let selected_before_refresh = app.table_state.selected().unwrap_or(0);
-            app.refresh_preserving_status(refresh_rows(app.filter.clone()));
+            app.refresh_preserving_status(refresh_rows());
             if !app.rows.is_empty() {
                 app.table_state
                     .select(Some(min(selected_before_refresh, app.rows.len() - 1)));
@@ -174,7 +179,7 @@ mod tests {
         app.begin_signal_confirmation(1);
 
         let mut refresh_calls = 0;
-        let mut refresh = |_: Option<String>| {
+        let mut refresh = || {
             refresh_calls += 1;
             vec![row(11, "foo")]
         };
@@ -203,7 +208,7 @@ mod tests {
         let mut app = App::with_rows(None, vec![row(11, "foo")]);
         app.begin_signal_confirmation(1);
 
-        let mut refresh = |_: Option<String>| vec![row(11, "foo")];
+        let mut refresh = || vec![row(11, "foo")];
         let mut sent = false;
         let mut sender = |_: i32, _: Signal| {
             sent = true;
@@ -225,12 +230,8 @@ mod tests {
         let mut app = App::with_rows(None, vec![row(11, "foo")]);
         app.begin_signal_confirmation(1);
 
-        let mut refresh = |_: Option<String>| vec![row(22, "bar")];
-        let mut sender_called = false;
-        let mut sender = |_: i32, _: Signal| {
-            sender_called = true;
-            Ok(())
-        };
+        let mut refresh = || vec![row(22, "bar")];
+        let mut sender = |_: i32, _: Signal| Ok(());
 
         assert!(handle_pending_confirmation_input(
             &mut app,
@@ -238,7 +239,6 @@ mod tests {
             &mut refresh,
             &mut sender
         ));
-        assert!(!sender_called);
         assert!(app.status.contains("aborted"));
         assert!(app.pending_confirmation.is_none());
     }
@@ -248,7 +248,7 @@ mod tests {
         let mut app = App::with_rows(None, vec![row(11, "foo")]);
         app.begin_signal_confirmation(1);
 
-        let mut refresh = |_: Option<String>| vec![row(11, "foo")];
+        let mut refresh = || vec![row(11, "foo")];
         let mut sender = |_: i32, _: Signal| Ok(());
 
         assert!(handle_pending_confirmation_input(
@@ -261,11 +261,67 @@ mod tests {
     }
 
     #[test]
+    fn pending_key_uppercase_y_sends_when_target_still_matches() {
+        let mut app = App::with_rows(None, vec![row(11, "foo")]);
+        app.begin_signal_confirmation(1);
+
+        let mut refresh = || vec![row(11, "foo")];
+        let mut sent = false;
+        let mut sender = |_: i32, _: Signal| {
+            sent = true;
+            Ok(())
+        };
+
+        assert!(handle_pending_confirmation_input(
+            &mut app,
+            KeyCode::Char('Y'),
+            &mut refresh,
+            &mut sender
+        ));
+        assert!(sent);
+        assert!(app.pending_confirmation.is_none());
+    }
+
+    #[test]
+    fn pending_key_uppercase_n_cancels_confirmation() {
+        let mut app = App::with_rows(None, vec![row(11, "foo")]);
+        app.begin_signal_confirmation(1);
+
+        let mut refresh = || vec![row(11, "foo")];
+        let mut sender = |_: i32, _: Signal| Ok(());
+
+        assert!(handle_pending_confirmation_input(
+            &mut app,
+            KeyCode::Char('N'),
+            &mut refresh,
+            &mut sender
+        ));
+        assert!(app.pending_confirmation.is_none());
+    }
+
+    #[test]
+    fn pending_key_escape_cancels_confirmation() {
+        let mut app = App::with_rows(None, vec![row(11, "foo")]);
+        app.begin_signal_confirmation(1);
+
+        let mut refresh = || vec![row(11, "foo")];
+        let mut sender = |_: i32, _: Signal| Ok(());
+
+        assert!(handle_pending_confirmation_input(
+            &mut app,
+            KeyCode::Esc,
+            &mut refresh,
+            &mut sender
+        ));
+        assert!(app.pending_confirmation.is_none());
+    }
+
+    #[test]
     fn pending_other_key_is_consumed_without_changes() {
         let mut app = App::with_rows(None, vec![row(11, "foo")]);
         app.begin_signal_confirmation(1);
 
-        let mut refresh = |_: Option<String>| vec![row(11, "foo")];
+        let mut refresh = || vec![row(11, "foo")];
         let mut sender = |_: i32, _: Signal| Ok(());
 
         assert!(handle_pending_confirmation_input(

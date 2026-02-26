@@ -20,3 +20,4 @@ ratatui = "0.30"
 sysinfo = "0.38"
 nix = { version = "0.31", default-features = false, features = ["signal"] }
 users = "0.11"
+regex = "1"

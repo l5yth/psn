@@ -65,16 +65,41 @@ cargo run --release --
 
 ```text
 psn v0.1.0
+process status navigator
 apache v2 (c) 2026 l5yth
 
-Usage: psn [FILTER]
+usage: psn <FILTER>
+usage: psn [OPTIONS] -f <FILTER>
+usage: psn [OPTIONS] -r <PATTERN>
+
+Terminal UI for browsing process status and sending Unix signals.
+
+Options:
+  -h, --help            Show usage instructions
+  -v, --version         Show version
+  -f, --filter <value>  Filter process names/commands (case insensitive string)
+  -r, --regex <value>   Use regex matching (regular expression pattern)
+  -u, --user            Show only current user's processes
 ```
 
 Examples:
 
 ```bash
-psn
+# substring filter (positional)
 psn "sshd"
+
+# substring filter via option
+psn -f "systemd"
+psn --filter "python"
+
+# regex filter
+psn -r 'ssh(d|agent)'
+psn --regex '(nginx|apache2)'
+
+# current user only
+psn -u
+psn -u -f "cargo"
+psn -u -r '^bash$'
 ```
 
 In-app keys:

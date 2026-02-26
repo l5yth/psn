@@ -901,6 +901,7 @@ dependencies = [
  "crossterm",
  "nix 0.31.1",
  "ratatui",
+ "regex",
  "sysinfo",
  "users",
 ]
