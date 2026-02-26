@@ -22,7 +22,11 @@ use anyhow::{Result, anyhow, bail};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliCommand {
     /// Run the TUI with an optional process filter.
-    Run { filter: Option<String> },
+    Run {
+        filter: Option<String>,
+        regex_mode: bool,
+        user_only: bool,
+    },
     /// Print usage instructions and exit.
     Help,
     /// Print version text and exit.
@@ -35,20 +39,71 @@ where
     I: IntoIterator,
     I::Item: Into<String>,
 {
-    let mut args = args.into_iter().map(Into::into);
-    let _argv0 = args.next();
+    let mut args: Vec<String> = args.into_iter().map(Into::into).collect();
+    if !args.is_empty() {
+        args.remove(0);
+    }
 
     let mut positionals: Vec<String> = Vec::new();
+    let mut filter_from_option: Option<String> = None;
     let mut wants_help = false;
     let mut wants_version = false;
+    let mut regex_mode = false;
+    let mut user_only = false;
+    let mut saw_valid_option = false;
+    let mut iter = args.into_iter();
 
-    for arg in args {
+    while let Some(arg) = iter.next() {
         match arg.as_str() {
-            "-h" | "--help" => wants_help = true,
-            "-v" | "--version" => wants_version = true,
-            _ if arg.starts_with('-') => bail!("unknown option: {arg}"),
+            "--" => {
+                positionals.extend(iter);
+                break;
+            }
+            "-h" | "--help" => {
+                wants_help = true;
+                saw_valid_option = true;
+            }
+            "-v" | "--version" => {
+                wants_version = true;
+                saw_valid_option = true;
+            }
+            "-r" | "--regex" => {
+                regex_mode = true;
+                saw_valid_option = true;
+            }
+            "-u" | "--user" => {
+                user_only = true;
+                saw_valid_option = true;
+            }
+            "-f" | "--filter" => {
+                saw_valid_option = true;
+                let value = iter
+                    .next()
+                    .ok_or_else(|| anyhow!("{arg} requires a FILTER value"))?;
+                if filter_from_option.is_some() {
+                    bail!("FILTER specified multiple times");
+                }
+                filter_from_option = Some(value);
+            }
+            _ if arg.starts_with('-') => {
+                if saw_valid_option {
+                    if regex_mode && filter_from_option.is_none() && positionals.is_empty() {
+                        positionals.push(arg);
+                        continue;
+                    }
+                    bail!("unknown option: {arg}");
+                }
+                if !positionals.is_empty() || filter_from_option.is_some() {
+                    bail!("unknown option: {arg}");
+                }
+                positionals.push(arg);
+            }
             _ => positionals.push(arg),
         }
+    }
+
+    if filter_from_option.is_some() && !positionals.is_empty() {
+        bail!("cannot combine positional FILTER with -f/--filter");
     }
 
     if wants_help && wants_version {
@@ -56,23 +111,65 @@ where
     }
 
     if wants_help {
-        if !positionals.is_empty() {
+        if !positionals.is_empty() || filter_from_option.is_some() || regex_mode || user_only {
             bail!("--help does not accept FILTER");
         }
         return Ok(CliCommand::Help);
     }
 
     if wants_version {
-        if !positionals.is_empty() {
+        if !positionals.is_empty() || filter_from_option.is_some() || regex_mode || user_only {
             bail!("--version does not accept FILTER");
         }
         return Ok(CliCommand::Version);
     }
 
-    match positionals.len() {
-        0 => Ok(CliCommand::Run { filter: None }),
-        1 => Ok(CliCommand::Run {
-            filter: Some(positionals.remove(0)),
+    if regex_mode && filter_from_option.is_some() {
+        bail!("cannot combine --regex with -f/--filter");
+    }
+
+    if let Some(filter) = filter_from_option {
+        return Ok(CliCommand::Run {
+            filter: Some(filter),
+            regex_mode: false,
+            user_only,
+        });
+    }
+
+    if regex_mode {
+        match positionals.as_slice() {
+            [] => {
+                return Ok(CliCommand::Run {
+                    filter: None,
+                    regex_mode: true,
+                    user_only,
+                });
+            }
+            [pattern] => {
+                return Ok(CliCommand::Run {
+                    filter: Some(pattern.clone()),
+                    regex_mode: true,
+                    user_only,
+                });
+            }
+            _ => bail!("too many PATTERN arguments for --regex"),
+        }
+    }
+
+    if saw_valid_option && !positionals.is_empty() {
+        bail!("when using options, pass FILTER with -f or --filter");
+    }
+
+    match positionals.as_slice() {
+        [] => Ok(CliCommand::Run {
+            filter: None,
+            regex_mode: false,
+            user_only,
+        }),
+        [filter] => Ok(CliCommand::Run {
+            filter: Some(filter.clone()),
+            regex_mode: false,
+            user_only,
         }),
         _ => bail!("too many positional arguments; expected at most one FILTER"),
     }
@@ -83,13 +180,18 @@ pub fn help_text() -> String {
     [
         &version_text(),
         "",
-        "psn [OPTIONS] [FILTER]",
+        "usage: psn <FILTER>",
+        "usage: psn [OPTIONS] -f <FILTER>",
+        "usage: psn [OPTIONS] -r <PATTERN>",
         "",
         "Terminal UI for browsing process status and sending Unix signals.",
         "",
         "Options:",
-        "  -h, --help     Show usage instructions",
-        "  -v, --version  Show version",
+        "  -h, --help            Show usage instructions",
+        "  -v, --version         Show version",
+        "  -f, --filter <value>  Filter process names/commands (case insensitive string)",
+        "  -r, --regex <value>   Use regex matching (regular expression pattern)",
+        "  -u, --user            Show only current user's processes",
     ]
     .join("\n")
 }
@@ -109,7 +211,14 @@ mod tests {
     #[test]
     fn parse_args_no_args_runs_without_filter() {
         let cmd = parse_args(["psn"]).expect("parse should succeed");
-        assert_eq!(cmd, CliCommand::Run { filter: None });
+        assert_eq!(
+            cmd,
+            CliCommand::Run {
+                filter: None,
+                regex_mode: false,
+                user_only: false
+            }
+        );
     }
 
     #[test]
@@ -118,7 +227,9 @@ mod tests {
         assert_eq!(
             cmd,
             CliCommand::Run {
-                filter: Some("sshd".to_string())
+                filter: Some("sshd".to_string()),
+                regex_mode: false,
+                user_only: false
             }
         );
     }
@@ -144,9 +255,118 @@ mod tests {
     }
 
     #[test]
-    fn parse_args_unknown_flags_are_not_treated_as_filter() {
-        assert!(parse_args(["psn", "-x"]).is_err());
-        assert!(parse_args(["psn", "--wat"]).is_err());
+    fn parse_args_dash_prefixed_filter_without_options_is_allowed() {
+        let cmd = parse_args(["psn", "-bash"]).expect("parse should succeed");
+        assert_eq!(
+            cmd,
+            CliCommand::Run {
+                filter: Some("-bash".to_string()),
+                regex_mode: false,
+                user_only: false
+            }
+        );
+    }
+
+    #[test]
+    fn parse_args_filter_flag_works() {
+        let short = parse_args(["psn", "-f", "sshd"]).expect("parse should succeed");
+        let long = parse_args(["psn", "--filter", "sshd"]).expect("parse should succeed");
+
+        assert_eq!(
+            short,
+            CliCommand::Run {
+                filter: Some("sshd".to_string()),
+                regex_mode: false,
+                user_only: false
+            }
+        );
+        assert_eq!(
+            long,
+            CliCommand::Run {
+                filter: Some("sshd".to_string()),
+                regex_mode: false,
+                user_only: false
+            }
+        );
+    }
+
+    #[test]
+    fn parse_args_regex_option_works_without_filter_flag() {
+        let short = parse_args(["psn", "-r", "sshd.*"]).expect("parse should succeed");
+        let long = parse_args(["psn", "--regex", "sshd.*"]).expect("parse should succeed");
+        let none = parse_args(["psn", "--regex"]).expect("parse should succeed");
+
+        assert_eq!(
+            short,
+            CliCommand::Run {
+                filter: Some("sshd.*".to_string()),
+                regex_mode: true,
+                user_only: false
+            }
+        );
+        assert_eq!(
+            long,
+            CliCommand::Run {
+                filter: Some("sshd.*".to_string()),
+                regex_mode: true,
+                user_only: false
+            }
+        );
+        assert_eq!(
+            none,
+            CliCommand::Run {
+                filter: None,
+                regex_mode: true,
+                user_only: false
+            }
+        );
+    }
+
+    #[test]
+    fn parse_args_user_flag_works() {
+        let cmd = parse_args(["psn", "-u"]).expect("parse should succeed");
+        assert_eq!(
+            cmd,
+            CliCommand::Run {
+                filter: None,
+                regex_mode: false,
+                user_only: true
+            }
+        );
+    }
+
+    #[test]
+    fn parse_args_unknown_flag_errors_after_known_option() {
+        assert!(parse_args(["psn", "-h", "--wat"]).is_err());
+        assert!(parse_args(["psn", "-f", "sshd", "--wat"]).is_err());
+    }
+
+    #[test]
+    fn parse_args_rejects_positional_filter_when_options_present() {
+        assert!(parse_args(["psn", "-v", "sshd"]).is_err());
+        assert!(parse_args(["psn", "--help", "sshd"]).is_err());
+        assert!(parse_args(["psn", "-f", "sshd", "bash"]).is_err());
+        assert!(parse_args(["psn", "-h", "-r"]).is_err());
+        assert!(parse_args(["psn", "-r", "x", "y"]).is_err());
+    }
+
+    #[test]
+    fn parse_args_rejects_missing_filter_value_for_flag() {
+        assert!(parse_args(["psn", "-f"]).is_err());
+        assert!(parse_args(["psn", "--filter"]).is_err());
+    }
+
+    #[test]
+    fn parse_args_option_terminator_allows_dash_prefixed_filter() {
+        let cmd = parse_args(["psn", "--", "--wat"]).expect("parse should succeed");
+        assert_eq!(
+            cmd,
+            CliCommand::Run {
+                filter: Some("--wat".to_string()),
+                regex_mode: false,
+                user_only: false
+            }
+        );
     }
 
     #[test]
@@ -157,9 +377,14 @@ mod tests {
     #[test]
     fn help_text_contains_usage() {
         let text = help_text();
-        assert!(text.contains("psn [OPTIONS] [FILTER]"));
+        assert!(text.contains("usage: psn <FILTER>"));
+        assert!(text.contains("usage: psn [OPTIONS] -f <FILTER>"));
+        assert!(text.contains("usage: psn [OPTIONS] -r <PATTERN>"));
         assert!(text.contains("--help"));
         assert!(text.contains("--version"));
+        assert!(text.contains("--filter"));
+        assert!(text.contains("--regex"));
+        assert!(text.contains("--user"));
     }
 
     #[test]

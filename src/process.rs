@@ -18,10 +18,46 @@
 
 use std::{ffi::OsString, path::Path};
 
+use anyhow::{Result, bail};
 use ratatui::style::Color;
+use regex::RegexBuilder;
 use sysinfo::{ProcessStatus, ProcessesToUpdate, System, Uid};
 
 use crate::model::ProcRow;
+
+/// Maximum allowed regex pattern length for `--regex`.
+pub const MAX_REGEX_PATTERN_LEN: usize = 256;
+
+/// Compiled filtering mode used during process row matching.
+#[derive(Debug, Clone)]
+pub enum FilterSpec {
+    /// Case-insensitive substring filter.
+    Substring(String),
+    /// Case-insensitive compiled regular expression.
+    Regex(regex::Regex),
+}
+
+/// Build a compiled filter from raw CLI filter input.
+pub fn compile_filter(filter: Option<String>, regex_mode: bool) -> Result<Option<FilterSpec>> {
+    let Some(filter_text) = filter else {
+        return Ok(None);
+    };
+
+    if regex_mode {
+        if filter_text.len() > MAX_REGEX_PATTERN_LEN {
+            bail!(
+                "regex pattern too long (max {} chars)",
+                MAX_REGEX_PATTERN_LEN
+            );
+        }
+        let regex = RegexBuilder::new(&filter_text)
+            .case_insensitive(true)
+            .build()?;
+        return Ok(Some(FilterSpec::Regex(regex)));
+    }
+
+    Ok(Some(FilterSpec::Substring(filter_text)))
+}
 
 /// Resolve a sysinfo uid to a displayable user string.
 pub fn to_user(uid: Option<&Uid>) -> String {
@@ -54,13 +90,14 @@ pub fn build_cmd(cmd_parts: &[OsString], exe_path: Option<&Path>) -> String {
 }
 
 /// Return whether a row matches an optional case-insensitive filter.
-pub fn matches_filter(row: &ProcRow, filter: Option<&str>) -> bool {
+pub fn matches_filter(row: &ProcRow, filter: Option<&FilterSpec>) -> bool {
     match filter {
         None => true,
-        Some(raw_filter) => {
+        Some(FilterSpec::Substring(raw_filter)) => {
             let lowered = raw_filter.to_lowercase();
             row.name.to_lowercase().contains(&lowered) || row.cmd.to_lowercase().contains(&lowered)
         }
+        Some(FilterSpec::Regex(regex)) => regex.is_match(&row.name) || regex.is_match(&row.cmd),
     }
 }
 
@@ -109,14 +146,31 @@ pub fn sort_rows(rows: &mut [ProcRow]) {
 }
 
 /// Refresh process rows from sysinfo and apply optional filtering.
-pub fn refresh_rows(sys: &mut System, filter: Option<&str>) -> Vec<ProcRow> {
+pub fn refresh_rows(
+    sys: &mut System,
+    filter: Option<&FilterSpec>,
+    user_only: bool,
+) -> Vec<ProcRow> {
     sys.refresh_processes(ProcessesToUpdate::All, true);
     sys.refresh_cpu_all();
     sys.refresh_memory();
 
+    let current_uid = if user_only {
+        users::get_current_uid().to_string().parse::<Uid>().ok()
+    } else {
+        None
+    };
+
     let mut rows: Vec<ProcRow> = sys
         .processes()
         .values()
+        .filter(|process| {
+            if let Some(uid) = current_uid.as_ref() {
+                process.user_id() == Some(uid)
+            } else {
+                true
+            }
+        })
         .map(|process| {
             let pid = process.pid().as_u32() as i32;
             let user = to_user(process.user_id());
@@ -142,8 +196,8 @@ pub fn refresh_rows(sys: &mut System, filter: Option<&str>) -> Vec<ProcRow> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_cmd, matches_filter, refresh_rows, sort_rows, status_dot_color, status_priority,
-        to_user,
+        FilterSpec, MAX_REGEX_PATTERN_LEN, build_cmd, compile_filter, matches_filter, refresh_rows,
+        sort_rows, status_dot_color, status_priority, to_user,
     };
     use crate::model::ProcRow;
     use ratatui::style::Color;
@@ -190,9 +244,33 @@ mod tests {
     fn matches_filter_matches_name_or_command_case_insensitive() {
         let r = row(1, "SSHD", ProcessStatus::Run, "/usr/sbin/daemon");
         assert!(matches_filter(&r, None));
-        assert!(matches_filter(&r, Some("ssh")));
-        assert!(matches_filter(&r, Some("DAEMON")));
-        assert!(!matches_filter(&r, Some("postgres")));
+        assert!(matches_filter(
+            &r,
+            Some(&FilterSpec::Substring("ssh".to_string()))
+        ));
+        assert!(matches_filter(
+            &r,
+            Some(&FilterSpec::Substring("DAEMON".to_string()))
+        ));
+        assert!(!matches_filter(
+            &r,
+            Some(&FilterSpec::Substring("postgres".to_string()))
+        ));
+    }
+
+    #[test]
+    fn matches_filter_supports_regex_mode() {
+        let r = row(1, "sshd", ProcessStatus::Run, "/usr/sbin/daemon");
+        let re = compile_filter(Some("^ssh.*$".to_string()), true)
+            .expect("regex should compile")
+            .expect("filter should exist");
+        assert!(matches_filter(&r, Some(&re)));
+    }
+
+    #[test]
+    fn compile_filter_rejects_overly_long_regex() {
+        let pattern = "a".repeat(MAX_REGEX_PATTERN_LEN + 1);
+        assert!(compile_filter(Some(pattern), true).is_err());
     }
 
     #[test]
@@ -249,7 +327,7 @@ mod tests {
     #[test]
     fn refresh_rows_returns_sorted_data() {
         let mut sys = System::new_all();
-        let rows = refresh_rows(&mut sys, None);
+        let rows = refresh_rows(&mut sys, None, false);
 
         let mut sorted = rows.clone();
         sort_rows(&mut sorted);
@@ -259,7 +337,8 @@ mod tests {
     #[test]
     fn refresh_rows_applies_filter() {
         let mut sys = System::new_all();
-        let rows = refresh_rows(&mut sys, Some("__psn_filter_that_should_not_exist__"));
+        let filter = FilterSpec::Substring("__psn_filter_that_should_not_exist__".to_string());
+        let rows = refresh_rows(&mut sys, Some(&filter), false);
         assert!(rows.is_empty());
     }
 }

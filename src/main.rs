@@ -28,6 +28,10 @@ fn main() -> Result<()> {
             println!("{}", version_text());
             Ok(())
         }
-        CliCommand::Run { filter } => psn::run(filter),
+        CliCommand::Run {
+            filter,
+            regex_mode,
+            user_only,
+        } => psn::run(filter, regex_mode, user_only),
     }
 }
