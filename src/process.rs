@@ -16,7 +16,7 @@
 
 //! Process collection, mapping, filtering, and ordering.
 
-use std::{ffi::OsString, path::Path};
+use std::{collections::HashMap, ffi::OsString, path::Path};
 
 use anyhow::{Result, bail};
 use ratatui::style::Color;
@@ -32,7 +32,11 @@ pub const MAX_REGEX_PATTERN_LEN: usize = 256;
 #[derive(Debug, Clone)]
 pub enum FilterSpec {
     /// Case-insensitive substring filter.
-    Substring(String),
+    Substring {
+        raw: String,
+        lowered: String,
+        ascii_only: bool,
+    },
     /// Case-insensitive compiled regular expression.
     Regex(regex::Regex),
 }
@@ -56,7 +60,11 @@ pub fn compile_filter(filter: Option<String>, regex_mode: bool) -> Result<Option
         return Ok(Some(FilterSpec::Regex(regex)));
     }
 
-    Ok(Some(FilterSpec::Substring(filter_text)))
+    Ok(Some(FilterSpec::Substring {
+        lowered: filter_text.to_lowercase(),
+        ascii_only: filter_text.is_ascii(),
+        raw: filter_text,
+    }))
 }
 
 /// Resolve a sysinfo uid to a displayable user string.
@@ -93,12 +101,45 @@ pub fn build_cmd(cmd_parts: &[OsString], exe_path: Option<&Path>) -> String {
 pub fn matches_filter(row: &ProcRow, filter: Option<&FilterSpec>) -> bool {
     match filter {
         None => true,
-        Some(FilterSpec::Substring(raw_filter)) => {
-            let lowered = raw_filter.to_lowercase();
-            row.name.to_lowercase().contains(&lowered) || row.cmd.to_lowercase().contains(&lowered)
+        Some(FilterSpec::Substring {
+            raw,
+            lowered,
+            ascii_only,
+        }) => {
+            contains_case_insensitive(&row.name, raw, lowered, *ascii_only)
+                || contains_case_insensitive(&row.cmd, raw, lowered, *ascii_only)
         }
         Some(FilterSpec::Regex(regex)) => regex.is_match(&row.name) || regex.is_match(&row.cmd),
     }
+}
+
+/// Check whether `haystack` contains `needle` case-insensitively.
+///
+/// Uses an ASCII fast-path with zero allocations and falls back to Unicode
+/// lowercasing when non-ASCII matching is required.
+fn contains_case_insensitive(
+    haystack: &str,
+    needle_raw: &str,
+    needle_lowered: &str,
+    ascii_only: bool,
+) -> bool {
+    if needle_raw.is_empty() {
+        return true;
+    }
+
+    if ascii_only && haystack.is_ascii() {
+        let haystack_bytes = haystack.as_bytes();
+        let needle_bytes = needle_raw.as_bytes();
+        if needle_bytes.len() > haystack_bytes.len() {
+            return false;
+        }
+
+        return haystack_bytes
+            .windows(needle_bytes.len())
+            .any(|window| window.eq_ignore_ascii_case(needle_bytes));
+    }
+
+    haystack.to_lowercase().contains(needle_lowered)
 }
 
 /// Priority rank used for stable row ordering by status.
@@ -146,20 +187,22 @@ pub fn sort_rows(rows: &mut [ProcRow]) {
 }
 
 /// Refresh process rows from sysinfo and apply optional filtering.
+///
+/// This intentionally refreshes only process data required by the current table
+/// columns (pid, user, status, name, command).
 pub fn refresh_rows(
     sys: &mut System,
     filter: Option<&FilterSpec>,
     user_only: bool,
 ) -> Vec<ProcRow> {
     sys.refresh_processes(ProcessesToUpdate::All, true);
-    sys.refresh_cpu_all();
-    sys.refresh_memory();
 
     let current_uid = if user_only {
         users::get_current_uid().to_string().parse::<Uid>().ok()
     } else {
         None
     };
+    let mut user_cache: HashMap<String, String> = HashMap::new();
 
     let mut rows: Vec<ProcRow> = sys
         .processes()
@@ -173,7 +216,7 @@ pub fn refresh_rows(
         })
         .map(|process| {
             let pid = process.pid().as_u32() as i32;
-            let user = to_user(process.user_id());
+            let user = resolve_user_cached(process.user_id(), &mut user_cache);
             let status = process.status();
             let name = process.name().to_string_lossy().to_string();
             let cmd = build_cmd(process.cmd(), process.exe());
@@ -193,14 +236,32 @@ pub fn refresh_rows(
     rows
 }
 
+/// Resolve user display text with per-refresh memoization to avoid repeated
+/// uid lookups for processes owned by the same user.
+fn resolve_user_cached(uid: Option<&Uid>, cache: &mut HashMap<String, String>) -> String {
+    let Some(uid_value) = uid else {
+        return "?".to_string();
+    };
+
+    let uid_key = uid_value.to_string();
+    if let Some(cached) = cache.get(&uid_key) {
+        return cached.clone();
+    }
+
+    let resolved = to_user(Some(uid_value));
+    cache.insert(uid_key, resolved.clone());
+    resolved
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         FilterSpec, MAX_REGEX_PATTERN_LEN, build_cmd, compile_filter, matches_filter, refresh_rows,
-        sort_rows, status_dot_color, status_priority, to_user,
+        resolve_user_cached, sort_rows, status_dot_color, status_priority, to_user,
     };
     use crate::model::ProcRow;
     use ratatui::style::Color;
+    use std::collections::HashMap;
     use std::{ffi::OsString, path::Path};
     use sysinfo::{ProcessStatus, System, Uid};
 
@@ -246,15 +307,27 @@ mod tests {
         assert!(matches_filter(&r, None));
         assert!(matches_filter(
             &r,
-            Some(&FilterSpec::Substring("ssh".to_string()))
+            Some(&FilterSpec::Substring {
+                raw: "ssh".to_string(),
+                lowered: "ssh".to_string(),
+                ascii_only: true,
+            })
         ));
         assert!(matches_filter(
             &r,
-            Some(&FilterSpec::Substring("DAEMON".to_string()))
+            Some(&FilterSpec::Substring {
+                raw: "DAEMON".to_string(),
+                lowered: "daemon".to_string(),
+                ascii_only: true,
+            })
         ));
         assert!(!matches_filter(
             &r,
-            Some(&FilterSpec::Substring("postgres".to_string()))
+            Some(&FilterSpec::Substring {
+                raw: "postgres".to_string(),
+                lowered: "postgres".to_string(),
+                ascii_only: true,
+            })
         ));
     }
 
@@ -284,7 +357,7 @@ mod tests {
         let substring = compile_filter(Some("ssh".to_string()), false)
             .expect("substring should parse")
             .expect("substring filter should exist");
-        assert!(matches!(substring, FilterSpec::Substring(_)));
+        assert!(matches!(substring, FilterSpec::Substring { .. }));
 
         let regex = compile_filter(Some("^ssh$".to_string()), true)
             .expect("regex should parse")
@@ -356,7 +429,11 @@ mod tests {
     #[test]
     fn refresh_rows_applies_filter() {
         let mut sys = System::new_all();
-        let filter = FilterSpec::Substring("__psn_filter_that_should_not_exist__".to_string());
+        let filter = FilterSpec::Substring {
+            raw: "__psn_filter_that_should_not_exist__".to_string(),
+            lowered: "__psn_filter_that_should_not_exist__".to_string(),
+            ascii_only: true,
+        };
         let rows = refresh_rows(&mut sys, Some(&filter), false);
         assert!(rows.is_empty());
     }
@@ -365,5 +442,32 @@ mod tests {
     fn refresh_rows_user_only_applies_current_uid_branch() {
         let mut sys = System::new_all();
         let _rows = refresh_rows(&mut sys, None, true);
+    }
+
+    #[test]
+    fn matches_filter_handles_empty_and_non_ascii_substring() {
+        let r = row(1, "Ångström", ProcessStatus::Run, "/usr/bin/ångström");
+        assert!(matches_filter(
+            &r,
+            Some(&FilterSpec::Substring {
+                raw: "".to_string(),
+                lowered: "".to_string(),
+                ascii_only: true,
+            })
+        ));
+        assert!(matches_filter(
+            &r,
+            Some(&FilterSpec::Substring {
+                raw: "ång".to_string(),
+                lowered: "ång".to_string(),
+                ascii_only: false,
+            })
+        ));
+    }
+
+    #[test]
+    fn resolve_user_cached_handles_missing_uid() {
+        let mut cache = HashMap::new();
+        assert_eq!(resolve_user_cached(None, &mut cache), "?");
     }
 }

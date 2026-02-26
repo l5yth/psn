@@ -22,6 +22,7 @@ fn main() -> Result<()> {
     dispatch_command(parse_args(std::env::args())?, &mut psn::run)
 }
 
+/// Execute a parsed CLI command with an injected runtime runner.
 fn dispatch_command(
     command: CliCommand,
     runner: &mut dyn FnMut(Option<String>, bool, bool) -> Result<()>,

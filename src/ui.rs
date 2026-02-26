@@ -70,10 +70,10 @@ pub fn render(frame: &mut Frame<'_>, app: &mut App) {
         Row::new([
             Cell::from("●").style(Style::default().fg(status_dot_color(row.status))),
             Cell::from(row.pid.to_string()),
-            Cell::from(row.name.clone()),
+            Cell::from(row.name.as_str()),
             Cell::from(format!("{:?}", row.status)),
-            Cell::from(row.user.clone()),
-            Cell::from(row.cmd.clone()),
+            Cell::from(row.user.as_str()),
+            Cell::from(row.cmd.as_str()),
         ])
     });
 
