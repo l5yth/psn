@@ -550,4 +550,14 @@ mod tests {
         let mut cache = HashMap::new();
         assert_eq!(&*resolve_user_cached(None, &mut cache), "?");
     }
+
+    #[test]
+    fn build_ancestor_chain_breaks_on_cycle() {
+        let mut pid_to_ppid_all = HashMap::new();
+        pid_to_ppid_all.insert(2, Some(3));
+        pid_to_ppid_all.insert(3, Some(2));
+
+        let chain = super::build_ancestor_chain(Some(2), &pid_to_ppid_all);
+        assert_eq!(chain, vec![2, 3]);
+    }
 }

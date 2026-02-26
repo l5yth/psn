@@ -16,14 +16,12 @@
 
 //! TUI rendering helpers.
 
-use std::collections::HashMap;
-
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, Wrap},
 };
 
-use crate::{app::App, process::status_dot_color};
+use crate::{app::App, process::status_dot_color, tree::display_order_with_prefix};
 
 /// Build the table title based on filter and process count.
 pub fn build_title(filter: Option<&str>, _count: usize) -> String {
@@ -68,7 +66,7 @@ pub fn render(frame: &mut Frame<'_>, app: &mut App) {
     ])
     .style(Style::default().add_modifier(Modifier::BOLD));
 
-    let tree_order = build_tree_order(&app.rows);
+    let tree_order = display_order_with_prefix(&app.rows);
     let body = tree_order.into_iter().map(|(idx, prefix)| {
         let row = &app.rows[idx];
         let tree_name = format!("{prefix}{}", row.name);
@@ -149,114 +147,10 @@ fn centered_rect(width_percent: u16, height: u16, area: Rect) -> Rect {
     horizontal[1]
 }
 
-fn build_tree_order(rows: &[crate::model::ProcRow]) -> Vec<(usize, String)> {
-    let mut pid_to_index: HashMap<i32, usize> = HashMap::new();
-    for (idx, row) in rows.iter().enumerate() {
-        pid_to_index.insert(row.pid, idx);
-    }
-
-    let mut roots: Vec<usize> = Vec::new();
-    let mut children: HashMap<i32, Vec<usize>> = HashMap::new();
-    for (idx, row) in rows.iter().enumerate() {
-        if let Some(parent_pid) = nearest_visible_ancestor(&row.ancestor_chain, &pid_to_index) {
-            children.entry(parent_pid).or_default().push(idx);
-            continue;
-        }
-        roots.push(idx);
-    }
-
-    sort_indices(&mut roots, rows);
-    for child_group in children.values_mut() {
-        sort_indices(child_group, rows);
-    }
-
-    let mut ordered: Vec<(usize, String)> = Vec::with_capacity(rows.len());
-    for (root_pos, root) in roots.iter().enumerate() {
-        let is_last_root = root_pos + 1 == roots.len();
-        walk_tree(
-            *root,
-            rows,
-            &children,
-            &mut ordered,
-            &[],
-            is_last_root,
-            true,
-        );
-    }
-    ordered
-}
-
-fn nearest_visible_ancestor(ancestor_chain: &[i32], visible: &HashMap<i32, usize>) -> Option<i32> {
-    for candidate in ancestor_chain {
-        if visible.contains_key(&candidate) {
-            return Some(*candidate);
-        }
-    }
-    None
-}
-
-fn walk_tree(
-    idx: usize,
-    rows: &[crate::model::ProcRow],
-    children: &HashMap<i32, Vec<usize>>,
-    ordered: &mut Vec<(usize, String)>,
-    ancestor_has_next: &[bool],
-    is_last: bool,
-    is_root: bool,
-) {
-    let mut prefix = String::new();
-    for has_next in ancestor_has_next {
-        if *has_next {
-            prefix.push_str("│ ");
-        } else {
-            prefix.push_str("  ");
-        }
-    }
-
-    if !is_root {
-        if is_last {
-            prefix.push_str("└─");
-        } else {
-            prefix.push_str("├─");
-        }
-    }
-
-    ordered.push((idx, prefix));
-    if let Some(next) = children.get(&rows[idx].pid) {
-        for (child_pos, child) in next.iter().enumerate() {
-            let child_is_last = child_pos + 1 == next.len();
-            let mut next_ancestors = ancestor_has_next.to_vec();
-            if !is_root {
-                next_ancestors.push(!is_last);
-            }
-            walk_tree(
-                *child,
-                rows,
-                children,
-                ordered,
-                &next_ancestors,
-                child_is_last,
-                false,
-            );
-        }
-    }
-}
-
-fn sort_indices(indices: &mut [usize], rows: &[crate::model::ProcRow]) {
-    indices.sort_by(|left, right| {
-        crate::process::status_priority(rows[*left].status)
-            .cmp(&crate::process::status_priority(rows[*right].status))
-            .then(rows[*left].pid.cmp(&rows[*right].pid))
-            .then(rows[*left].name.cmp(&rows[*right].name))
-            .then(rows[*left].user.as_ref().cmp(rows[*right].user.as_ref()))
-            .then(rows[*left].cmd.cmp(&rows[*right].cmd))
-    });
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{build_footer, build_help, build_title, build_tree_order, render};
-    use crate::{app::App, model::ProcRow};
+    use super::{build_footer, build_help, build_title, render};
+    use crate::{app::App, model::ProcRow, tree::display_order_with_prefix};
     use ratatui::{Terminal, backend::TestBackend};
     use std::sync::Arc;
     use sysinfo::ProcessStatus;
@@ -371,7 +265,7 @@ mod tests {
                 cmd: "/bin/grandchild".to_string(),
             },
         ];
-        let order = build_tree_order(&rows);
+        let order = display_order_with_prefix(&rows);
         assert_eq!(
             order,
             vec![
@@ -423,7 +317,7 @@ mod tests {
             },
         ];
 
-        let order = build_tree_order(&rows);
+        let order = display_order_with_prefix(&rows);
         assert_eq!(
             order,
             vec![
@@ -476,7 +370,7 @@ mod tests {
             },
         ];
 
-        let order = build_tree_order(&rows);
+        let order = display_order_with_prefix(&rows);
         assert_eq!(
             order,
             vec![
@@ -510,7 +404,7 @@ mod tests {
                 cmd: "/bin/grandchild".to_string(),
             },
         ];
-        let order = build_tree_order(&rows);
+        let order = display_order_with_prefix(&rows);
         assert_eq!(order, vec![(0, "".to_string()), (1, "└─".to_string())]);
     }
 }

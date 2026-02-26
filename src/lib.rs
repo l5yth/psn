@@ -22,6 +22,7 @@ pub mod model;
 pub mod process;
 pub mod runtime;
 pub mod signal;
+pub mod tree;
 pub mod ui;
 
 use anyhow::Result;
