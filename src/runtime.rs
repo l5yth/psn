@@ -239,8 +239,6 @@ pub fn run_interactive(
 ) -> Result<()> {
     let mut terminal = setup_terminal()?;
     let mut sys = System::new_all();
-    let initial_rows = process::refresh_rows(&mut sys, compiled_filter.as_ref(), user_only);
-    let mut app = App::with_rows(filter, initial_rows);
 
     let mut draw = |app: &mut App| -> Result<()> {
         terminal.draw(|frame| ui::render(frame, app))?;
@@ -255,8 +253,8 @@ pub fn run_interactive(
     };
     let mut refresh_rows = || process::refresh_rows(&mut sys, compiled_filter.as_ref(), user_only);
     let mut sender = |pid, sig| signal::send_signal(pid, sig).map_err(|err| err.to_string());
-    let run_result = run_event_loop(
-        &mut app,
+    let run_result = run_with_runtime(
+        filter,
         &mut draw,
         &mut next_event,
         &mut refresh_rows,
@@ -265,6 +263,18 @@ pub fn run_interactive(
 
     restore_terminal(terminal);
     run_result
+}
+
+fn run_with_runtime(
+    filter: Option<String>,
+    draw: &mut dyn FnMut(&mut App) -> Result<()>,
+    next_event: &mut dyn FnMut(Duration) -> Result<Option<Event>>,
+    refresh_rows: &mut dyn FnMut() -> Vec<ProcRow>,
+    sender: &mut dyn FnMut(i32, Signal) -> Result<(), String>,
+) -> Result<()> {
+    let initial_rows = refresh_rows();
+    let mut app = App::with_rows(filter, initial_rows);
+    run_event_loop(&mut app, draw, next_event, refresh_rows, sender)
 }
 
 /// Configure terminal raw mode and alternate screen for TUI rendering.
@@ -294,9 +304,12 @@ fn refresh_with_selection_preserved(app: &mut App, refresh_rows: &mut dyn FnMut(
 
 #[cfg(test)]
 mod tests {
-    use super::{Action, ActionResult, apply_action, map_key_event_to_action, run_event_loop};
+    use super::{
+        Action, ActionResult, apply_action, map_key_event_to_action, run_event_loop,
+        run_with_runtime,
+    };
     use crate::{app::App, model::ProcRow};
-    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
     use nix::sys::signal::Signal;
     use std::sync::Arc;
     use std::time::Duration;
@@ -589,5 +602,161 @@ mod tests {
         .expect("loop should terminate cleanly");
 
         assert!(draw_calls >= 2);
+    }
+
+    #[test]
+    fn run_event_loop_updates_redraw_state_for_non_quit_key_action() {
+        let mut app = App::with_rows(None, vec![row(11, "foo"), row(12, "bar")]);
+        let mut draw_calls = 0;
+        let mut draw = |_: &mut App| -> anyhow::Result<()> {
+            draw_calls += 1;
+            Ok(())
+        };
+
+        let mut events = vec![
+            Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)),
+            Event::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE)),
+        ]
+        .into_iter();
+        let mut next_event =
+            |_timeout: Duration| -> anyhow::Result<Option<Event>> { Ok(events.next()) };
+        let mut refresh = || vec![row(11, "foo"), row(12, "bar")];
+        let mut sender = |_: i32, _: Signal| Ok(());
+
+        run_event_loop(
+            &mut app,
+            &mut draw,
+            &mut next_event,
+            &mut refresh,
+            &mut sender,
+        )
+        .expect("loop should terminate cleanly");
+
+        assert_eq!(app.table_state.selected(), Some(1));
+        assert!(draw_calls >= 2);
+    }
+
+    #[test]
+    fn run_event_loop_ignores_non_press_key_events() {
+        let mut app = App::with_rows(None, vec![row(11, "foo"), row(12, "bar")]);
+        let mut draw = |_: &mut App| -> anyhow::Result<()> { Ok(()) };
+        let release =
+            KeyEvent::new_with_kind(KeyCode::Down, KeyModifiers::NONE, KeyEventKind::Release);
+        let mut events = vec![
+            Event::Key(release),
+            Event::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE)),
+        ]
+        .into_iter();
+        let mut next_event =
+            |_timeout: Duration| -> anyhow::Result<Option<Event>> { Ok(events.next()) };
+        let mut refresh = || vec![row(11, "foo"), row(12, "bar")];
+        let mut sender = |_: i32, _: Signal| Ok(());
+
+        run_event_loop(
+            &mut app,
+            &mut draw,
+            &mut next_event,
+            &mut refresh,
+            &mut sender,
+        )
+        .expect("loop should terminate cleanly");
+
+        assert_eq!(app.table_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn run_event_loop_ignores_non_key_events() {
+        let mut app = App::with_rows(None, vec![row(11, "foo")]);
+        let mut draw = |_: &mut App| -> anyhow::Result<()> { Ok(()) };
+        let mut events = vec![
+            Event::FocusGained,
+            Event::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE)),
+        ]
+        .into_iter();
+        let mut next_event =
+            |_timeout: Duration| -> anyhow::Result<Option<Event>> { Ok(events.next()) };
+        let mut refresh = || vec![row(11, "foo")];
+        let mut sender = |_: i32, _: Signal| Ok(());
+
+        run_event_loop(
+            &mut app,
+            &mut draw,
+            &mut next_event,
+            &mut refresh,
+            &mut sender,
+        )
+        .expect("loop should terminate cleanly");
+    }
+
+    #[test]
+    fn run_event_loop_propagates_draw_errors() {
+        let mut app = App::with_rows(None, vec![row(11, "foo")]);
+        let mut draw = |_: &mut App| -> anyhow::Result<()> { Err(anyhow::anyhow!("draw failed")) };
+        let mut next_event = |_timeout: Duration| -> anyhow::Result<Option<Event>> { Ok(None) };
+        let mut refresh = || vec![row(11, "foo")];
+        let mut sender = |_: i32, _: Signal| Ok(());
+
+        let result = run_event_loop(
+            &mut app,
+            &mut draw,
+            &mut next_event,
+            &mut refresh,
+            &mut sender,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn run_event_loop_propagates_event_errors() {
+        let mut app = App::with_rows(None, vec![row(11, "foo")]);
+        let mut draw = |_: &mut App| -> anyhow::Result<()> { Ok(()) };
+        let mut next_event = |_timeout: Duration| -> anyhow::Result<Option<Event>> {
+            Err(anyhow::anyhow!("event failed"))
+        };
+        let mut refresh = || vec![row(11, "foo")];
+        let mut sender = |_: i32, _: Signal| Ok(());
+
+        let result = run_event_loop(
+            &mut app,
+            &mut draw,
+            &mut next_event,
+            &mut refresh,
+            &mut sender,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn run_with_runtime_initializes_rows_and_runs_loop() {
+        let mut draw_calls = 0;
+        let mut draw = |_: &mut App| -> anyhow::Result<()> {
+            draw_calls += 1;
+            Ok(())
+        };
+        let mut events = vec![Event::Key(KeyEvent::new(
+            KeyCode::Char('q'),
+            KeyModifiers::NONE,
+        ))]
+        .into_iter();
+        let mut next_event =
+            |_timeout: Duration| -> anyhow::Result<Option<Event>> { Ok(events.next()) };
+        let mut refresh_calls = 0;
+        let mut refresh = || {
+            refresh_calls += 1;
+            vec![row(11, "foo")]
+        };
+        let mut sender = |_: i32, _: Signal| Ok(());
+
+        run_with_runtime(
+            Some("foo".to_string()),
+            &mut draw,
+            &mut next_event,
+            &mut refresh,
+            &mut sender,
+        )
+        .expect("runtime should terminate cleanly");
+
+        assert_eq!(refresh_calls, 1);
+        assert!(draw_calls >= 1);
     }
 }

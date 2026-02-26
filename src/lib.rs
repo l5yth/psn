@@ -39,7 +39,7 @@ mod tests {
     use super::run;
 
     #[test]
-    fn run_returns_error_for_invalid_regex_before_runtime_call() {
+    fn run_returns_error_for_invalid_regex_before_terminal_setup() {
         let result = run(Some("(".to_string()), true, false);
         assert!(result.is_err());
     }

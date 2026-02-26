@@ -44,36 +44,24 @@ pub fn display_order_with_prefix(rows: &[ProcRow]) -> Vec<(usize, String)> {
 
     let mut ordered: Vec<(usize, String)> = Vec::with_capacity(rows.len());
     let mut visited: HashSet<usize> = HashSet::with_capacity(rows.len());
+    let mut context = WalkContext {
+        rows,
+        children: &children,
+        ordered: &mut ordered,
+        visited: &mut visited,
+    };
     for (root_pos, root) in roots.iter().enumerate() {
         let is_last_root = root_pos + 1 == roots.len();
-        walk_tree(
-            *root,
-            rows,
-            &children,
-            &mut ordered,
-            &mut visited,
-            &[],
-            is_last_root,
-            true,
-        );
+        walk_tree(&mut context, *root, &[], is_last_root, true);
     }
 
-    if visited.len() < rows.len() {
+    if context.visited.len() < rows.len() {
         let mut remaining: Vec<usize> = (0..rows.len())
-            .filter(|idx| !visited.contains(idx))
+            .filter(|idx| !context.visited.contains(idx))
             .collect();
         sort_indices(&mut remaining, rows);
         for idx in remaining {
-            walk_tree(
-                idx,
-                rows,
-                &children,
-                &mut ordered,
-                &mut visited,
-                &[],
-                true,
-                true,
-            );
+            walk_tree(&mut context, idx, &[], true, true);
         }
     }
     ordered
@@ -97,16 +85,13 @@ fn nearest_visible_ancestor(ancestor_chain: &[i32], visible: &HashMap<i32, usize
 }
 
 fn walk_tree(
+    context: &mut WalkContext<'_>,
     idx: usize,
-    rows: &[ProcRow],
-    children: &HashMap<i32, Vec<usize>>,
-    ordered: &mut Vec<(usize, String)>,
-    visited: &mut HashSet<usize>,
     ancestor_has_next: &[bool],
     is_last: bool,
     is_root: bool,
 ) {
-    if !visited.insert(idx) {
+    if !context.visited.insert(idx) {
         return;
     }
 
@@ -127,24 +112,15 @@ fn walk_tree(
         }
     }
 
-    ordered.push((idx, prefix));
-    if let Some(next) = children.get(&rows[idx].pid) {
+    context.ordered.push((idx, prefix));
+    if let Some(next) = context.children.get(&context.rows[idx].pid) {
         for (child_pos, child) in next.iter().enumerate() {
             let child_is_last = child_pos + 1 == next.len();
             let mut next_ancestors = ancestor_has_next.to_vec();
             if !is_root {
                 next_ancestors.push(!is_last);
             }
-            walk_tree(
-                *child,
-                rows,
-                children,
-                ordered,
-                visited,
-                &next_ancestors,
-                child_is_last,
-                false,
-            );
+            walk_tree(context, *child, &next_ancestors, child_is_last, false);
         }
     }
 }
@@ -158,6 +134,13 @@ fn sort_indices(indices: &mut [usize], rows: &[ProcRow]) {
             .then(rows[*left].user.as_ref().cmp(rows[*right].user.as_ref()))
             .then(rows[*left].cmd.cmp(&rows[*right].cmd))
     });
+}
+
+struct WalkContext<'a> {
+    rows: &'a [ProcRow],
+    children: &'a HashMap<i32, Vec<usize>>,
+    ordered: &'a mut Vec<(usize, String)>,
+    visited: &'a mut HashSet<usize>,
 }
 
 #[cfg(test)]
