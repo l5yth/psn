@@ -107,7 +107,7 @@ fn handle_pending_confirmation_input(
     sender: &mut dyn FnMut(i32, nix::sys::signal::Signal) -> Result<(), String>,
 ) -> bool {
     match key_code {
-        KeyCode::Char('y') | KeyCode::Char('Y') => {
+        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
             let selected_before_refresh = app.table_state.selected().unwrap_or(0);
             app.refresh_preserving_status(refresh_rows(app.filter.clone()));
             if !app.rows.is_empty() {
@@ -195,6 +195,28 @@ mod tests {
         ));
         assert!(sent);
         assert_eq!(refresh_calls, 2);
+        assert!(app.pending_confirmation.is_none());
+    }
+
+    #[test]
+    fn pending_key_enter_sends_when_target_still_matches() {
+        let mut app = App::with_rows(None, vec![row(11, "foo")]);
+        app.begin_signal_confirmation(1);
+
+        let mut refresh = |_: Option<String>| vec![row(11, "foo")];
+        let mut sent = false;
+        let mut sender = |_: i32, _: Signal| {
+            sent = true;
+            Ok(())
+        };
+
+        assert!(handle_pending_confirmation_input(
+            &mut app,
+            KeyCode::Enter,
+            &mut refresh,
+            &mut sender
+        ));
+        assert!(sent);
         assert!(app.pending_confirmation.is_none());
     }
 
