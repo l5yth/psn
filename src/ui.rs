@@ -21,7 +21,7 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, Wrap},
 };
 
-use crate::{app::App, process::status_dot_color};
+use crate::{app::App, process::status_dot_color, tree::display_order_with_prefix};
 
 /// Build the table title based on filter and process count.
 pub fn build_title(filter: Option<&str>, _count: usize) -> String {
@@ -66,13 +66,16 @@ pub fn render(frame: &mut Frame<'_>, app: &mut App) {
     ])
     .style(Style::default().add_modifier(Modifier::BOLD));
 
-    let body = app.rows.iter().map(|row| {
+    let tree_order = display_order_with_prefix(&app.rows);
+    let body = tree_order.into_iter().map(|(idx, prefix)| {
+        let row = &app.rows[idx];
+        let tree_name = format!("{prefix}{}", row.name);
         Row::new([
             Cell::from("●").style(Style::default().fg(status_dot_color(row.status))),
             Cell::from(row.pid.to_string()),
-            Cell::from(row.name.as_str()),
+            Cell::from(tree_name),
             Cell::from(format!("{:?}", row.status)),
-            Cell::from(row.user.as_str()),
+            Cell::from(row.user.as_ref()),
             Cell::from(row.cmd.as_str()),
         ])
     });
@@ -147,14 +150,17 @@ fn centered_rect(width_percent: u16, height: u16, area: Rect) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::{build_footer, build_help, build_title, render};
-    use crate::{app::App, model::ProcRow};
+    use crate::{app::App, model::ProcRow, tree::display_order_with_prefix};
     use ratatui::{Terminal, backend::TestBackend};
+    use std::sync::Arc;
     use sysinfo::ProcessStatus;
 
     fn sample_row() -> ProcRow {
         ProcRow {
             pid: 7,
-            user: "alice".to_string(),
+            ppid: None,
+            ancestor_chain: Vec::new(),
+            user: Arc::from("alice"),
             status: ProcessStatus::Run,
             name: "psn".to_string(),
             cmd: "psn --demo".to_string(),
@@ -226,5 +232,179 @@ mod tests {
 
         assert!(text.contains("send signal"));
         assert!(text.contains("confirm sending SIGHUP (1)"));
+    }
+
+    #[test]
+    fn build_tree_order_nests_children_under_parent() {
+        let rows = vec![
+            ProcRow {
+                pid: 1,
+                ppid: None,
+                ancestor_chain: Vec::new(),
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                name: "parent".to_string(),
+                cmd: "/bin/parent".to_string(),
+            },
+            ProcRow {
+                pid: 2,
+                ppid: Some(1),
+                ancestor_chain: vec![1],
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                name: "child".to_string(),
+                cmd: "/bin/child".to_string(),
+            },
+            ProcRow {
+                pid: 3,
+                ppid: Some(2),
+                ancestor_chain: vec![2, 1],
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                name: "grandchild".to_string(),
+                cmd: "/bin/grandchild".to_string(),
+            },
+        ];
+        let order = display_order_with_prefix(&rows);
+        assert_eq!(
+            order,
+            vec![
+                (0, "".to_string()),
+                (1, "└─".to_string()),
+                (2, "  └─".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn build_tree_order_draws_branch_segments() {
+        let rows = vec![
+            ProcRow {
+                pid: 1,
+                ppid: None,
+                ancestor_chain: Vec::new(),
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                name: "parent".to_string(),
+                cmd: "/bin/parent".to_string(),
+            },
+            ProcRow {
+                pid: 2,
+                ppid: Some(1),
+                ancestor_chain: vec![1],
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                name: "child-a".to_string(),
+                cmd: "/bin/child-a".to_string(),
+            },
+            ProcRow {
+                pid: 3,
+                ppid: Some(1),
+                ancestor_chain: vec![1],
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                name: "child-b".to_string(),
+                cmd: "/bin/child-b".to_string(),
+            },
+            ProcRow {
+                pid: 4,
+                ppid: Some(2),
+                ancestor_chain: vec![2, 1],
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                name: "grandchild".to_string(),
+                cmd: "/bin/grandchild".to_string(),
+            },
+        ];
+
+        let order = display_order_with_prefix(&rows);
+        assert_eq!(
+            order,
+            vec![
+                (0, "".to_string()),
+                (1, "├─".to_string()),
+                (3, "│ └─".to_string()),
+                (2, "└─".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn build_tree_order_sorts_siblings_by_status_then_pid() {
+        let rows = vec![
+            ProcRow {
+                pid: 1,
+                ppid: None,
+                ancestor_chain: Vec::new(),
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                name: "parent".to_string(),
+                cmd: "/bin/parent".to_string(),
+            },
+            ProcRow {
+                pid: 30,
+                ppid: Some(1),
+                ancestor_chain: vec![1],
+                user: Arc::from("u"),
+                status: ProcessStatus::Sleep,
+                name: "child-sleep".to_string(),
+                cmd: "/bin/child-sleep".to_string(),
+            },
+            ProcRow {
+                pid: 40,
+                ppid: Some(1),
+                ancestor_chain: vec![1],
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                name: "child-run-high".to_string(),
+                cmd: "/bin/child-run-high".to_string(),
+            },
+            ProcRow {
+                pid: 20,
+                ppid: Some(1),
+                ancestor_chain: vec![1],
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                name: "child-run-low".to_string(),
+                cmd: "/bin/child-run-low".to_string(),
+            },
+        ];
+
+        let order = display_order_with_prefix(&rows);
+        assert_eq!(
+            order,
+            vec![
+                (0, "".to_string()),
+                (3, "├─".to_string()),
+                (2, "├─".to_string()),
+                (1, "└─".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn build_tree_order_reattaches_to_nearest_visible_ancestor() {
+        let rows = vec![
+            ProcRow {
+                pid: 1,
+                ppid: None,
+                ancestor_chain: Vec::new(),
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                name: "parent".to_string(),
+                cmd: "/bin/parent".to_string(),
+            },
+            ProcRow {
+                pid: 3,
+                ppid: Some(2),
+                ancestor_chain: vec![2, 1],
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                name: "grandchild".to_string(),
+                cmd: "/bin/grandchild".to_string(),
+            },
+        ];
+        let order = display_order_with_prefix(&rows);
+        assert_eq!(order, vec![(0, "".to_string()), (1, "└─".to_string())]);
     }
 }

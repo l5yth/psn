@@ -21,7 +21,7 @@ use std::cmp::min;
 use nix::sys::signal::Signal;
 use ratatui::widgets::TableState;
 
-use crate::{model::ProcRow, signal::signal_from_digit};
+use crate::{model::ProcRow, signal::signal_from_digit, tree::display_order_indices};
 
 /// Mutable application state shared between input handling and rendering.
 #[derive(Debug)]
@@ -158,12 +158,7 @@ impl App {
             None => return,
         };
 
-        let selected = match self.table_state.selected() {
-            Some(value) => value,
-            None => return,
-        };
-
-        let row = match self.rows.get(selected) {
+        let row = match self.selected_row() {
             Some(value) => value,
             None => return,
         };
@@ -185,12 +180,7 @@ impl App {
             None => return,
         };
 
-        let selected = match self.table_state.selected() {
-            Some(value) => value,
-            None => return,
-        };
-
-        let row = match self.rows.get(selected) {
+        let row = match self.selected_row() {
             Some(value) => value,
             None => return,
         };
@@ -258,5 +248,12 @@ impl App {
                 pending.signal, pending.digit, pending.process_name, pending.pid
             )
         })
+    }
+
+    fn selected_row(&self) -> Option<&ProcRow> {
+        let selected_display_index = self.table_state.selected()?;
+        let display_to_data = display_order_indices(&self.rows);
+        let row_index = *display_to_data.get(selected_display_index)?;
+        self.rows.get(row_index)
     }
 }

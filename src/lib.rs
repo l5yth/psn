@@ -22,73 +22,25 @@ pub mod model;
 pub mod process;
 pub mod runtime;
 pub mod signal;
+pub mod tree;
 pub mod ui;
 
+use crate::runtime::run_interactive;
 use anyhow::Result;
-use crossterm::{
-    event::{self, Event, KeyEventKind},
-    execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
-};
-use ratatui::{Terminal, prelude::CrosstermBackend};
-use std::{io, time::Duration};
-
-use sysinfo::System;
-
-use crate::{
-    app::App,
-    runtime::{apply_action, map_key_event_to_action},
-};
 
 /// Run the interactive TUI application.
 pub fn run(filter: Option<String>, regex_mode: bool, user_only: bool) -> Result<()> {
     let compiled_filter = process::compile_filter(filter.clone(), regex_mode)?;
-
-    let mut terminal = setup_terminal()?;
-    let mut sys = System::new_all();
-    let initial_rows = process::refresh_rows(&mut sys, compiled_filter.as_ref(), user_only);
-    let mut app = App::with_rows(filter, initial_rows);
-
-    let run_result = (|| -> Result<()> {
-        loop {
-            terminal.draw(|frame| ui::render(frame, &mut app))?;
-
-            if event::poll(Duration::from_millis(60))?
-                && let Event::Key(key) = event::read()?
-            {
-                if key.kind != KeyEventKind::Press {
-                    continue;
-                }
-
-                let action = map_key_event_to_action(key.code, app.pending_confirmation.is_some());
-                let mut refresh_rows =
-                    || process::refresh_rows(&mut sys, compiled_filter.as_ref(), user_only);
-                let mut sender =
-                    |pid, sig| signal::send_signal(pid, sig).map_err(|err| err.to_string());
-                if apply_action(&mut app, action, &mut refresh_rows, &mut sender) {
-                    break;
-                }
-            }
-        }
-
-        Ok(())
-    })();
-
-    restore_terminal(terminal);
-    run_result
+    run_interactive(filter, compiled_filter, user_only)
 }
 
-/// Configure terminal raw mode and alternate screen for TUI rendering.
-fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
-    Ok(Terminal::new(CrosstermBackend::new(stdout))?)
-}
+#[cfg(test)]
+mod tests {
+    use super::run;
 
-/// Restore terminal state after TUI execution, ignoring restoration failures.
-fn restore_terminal(mut terminal: Terminal<CrosstermBackend<io::Stdout>>) {
-    let _ = disable_raw_mode();
-    let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
-    let _ = terminal.show_cursor();
+    #[test]
+    fn run_returns_error_for_invalid_regex_before_terminal_setup() {
+        let result = run(Some("(".to_string()), true, false);
+        assert!(result.is_err());
+    }
 }

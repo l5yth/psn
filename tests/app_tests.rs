@@ -16,12 +16,15 @@
 
 use nix::sys::signal::Signal;
 use psn::{app::App, model::ProcRow};
+use std::sync::Arc;
 use sysinfo::ProcessStatus;
 
 fn row(pid: i32) -> ProcRow {
     ProcRow {
         pid,
-        user: "u".to_string(),
+        ppid: None,
+        ancestor_chain: Vec::new(),
+        user: Arc::from("u"),
         status: ProcessStatus::Run,
         name: format!("p{pid}"),
         cmd: format!("/bin/p{pid}"),
@@ -328,4 +331,39 @@ fn page_down_clears_invalid_selection_when_rows_are_empty() {
     app.page_down(1);
 
     assert_eq!(app.table_state.selected(), None);
+}
+
+#[test]
+fn begin_signal_confirmation_uses_visible_tree_selection_index() {
+    let parent = ProcRow {
+        pid: 1,
+        ppid: None,
+        ancestor_chain: Vec::new(),
+        user: Arc::from("u"),
+        status: ProcessStatus::Sleep,
+        name: "parent".to_string(),
+        cmd: "/bin/parent".to_string(),
+    };
+    let child = ProcRow {
+        pid: 2,
+        ppid: Some(1),
+        ancestor_chain: vec![1],
+        user: Arc::from("u"),
+        status: ProcessStatus::Run,
+        name: "child".to_string(),
+        cmd: "/bin/child".to_string(),
+    };
+
+    // Backing order differs from visual tree order (child first by status).
+    let mut app = App::with_rows(None, vec![child, parent]);
+    // Visual row 0 points to parent in tree mode.
+    app.table_state.select(Some(0));
+
+    app.begin_signal_confirmation(1);
+
+    let pending = app
+        .pending_confirmation
+        .expect("pending confirmation should exist");
+    assert_eq!(pending.pid, 1);
+    assert_eq!(pending.process_name, "parent");
 }

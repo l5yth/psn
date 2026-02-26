@@ -16,6 +16,8 @@
 
 //! Domain data structures for process rows shown in the TUI.
 
+use std::sync::Arc;
+
 use sysinfo::ProcessStatus;
 
 /// A single process row rendered in the process table.
@@ -23,8 +25,12 @@ use sysinfo::ProcessStatus;
 pub struct ProcRow {
     /// Process identifier.
     pub pid: i32,
+    /// Parent process identifier when available.
+    pub ppid: Option<i32>,
+    /// Ancestor pid chain from immediate parent upward.
+    pub ancestor_chain: Vec<i32>,
     /// Resolved user name or fallback identifier.
-    pub user: String,
+    pub user: Arc<str>,
     /// Process status from sysinfo.
     pub status: ProcessStatus,
     /// Short process name.
