@@ -39,9 +39,10 @@ use crate::{app::App, model::ProcRow};
 
 /// Run the interactive TUI application.
 pub fn run(filter: Option<String>, regex_mode: bool, user_only: bool) -> Result<()> {
+    let compiled_filter = process::compile_filter(filter.clone(), regex_mode)?;
+
     let mut terminal = setup_terminal()?;
     let mut sys = System::new_all();
-    let compiled_filter = process::compile_filter(filter.clone(), regex_mode)?;
     let initial_rows = process::refresh_rows(&mut sys, compiled_filter.as_ref(), user_only);
     let mut app = App::with_rows(filter, initial_rows);
 
