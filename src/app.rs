@@ -227,11 +227,34 @@ impl App {
         }
     }
 
+    /// Check whether the pending confirmation target still matches current rows.
+    pub fn pending_target_matches_current_rows(&self) -> bool {
+        let Some(pending) = self.pending_confirmation.as_ref() else {
+            return false;
+        };
+
+        self.rows
+            .iter()
+            .any(|row| row.pid == pending.pid && row.name == pending.process_name)
+    }
+
+    /// Abort pending confirmation because the target no longer matches current rows.
+    pub fn abort_pending_target_changed(&mut self) {
+        let Some(pending) = self.pending_confirmation.take() else {
+            return;
+        };
+
+        self.status = format!(
+            "aborted: process {} ({}) no longer matches confirmation target",
+            pending.process_name, pending.pid
+        );
+    }
+
     /// Build the confirmation prompt text for the current pending action.
     pub fn confirmation_prompt(&self) -> Option<String> {
         self.pending_confirmation.as_ref().map(|pending| {
             format!(
-                "Confirm sending {:?} ({}) to process {} ({}) (y/n)",
+                "confirm sending {:?} ({}) to process {} ({}) (y/n)",
                 pending.signal, pending.digit, pending.process_name, pending.pid
             )
         })

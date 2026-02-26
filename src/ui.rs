@@ -114,7 +114,7 @@ pub fn render(frame: &mut Frame<'_>, app: &mut App) {
         frame.render_widget(Clear, modal);
         frame.render_widget(
             Paragraph::new(prompt)
-                .block(Block::default().borders(Borders::ALL).title("Confirm"))
+                .block(Block::default().borders(Borders::ALL).title("send signal"))
                 .alignment(Alignment::Center)
                 .wrap(Wrap { trim: true }),
             modal,
@@ -224,7 +224,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join("");
 
-        assert!(text.contains("Confirm"));
-        assert!(text.contains("Confirm sending SIGHUP (1)"));
+        assert!(text.contains("send signal"));
+        assert!(text.contains("confirm sending SIGHUP (1)"));
     }
 }

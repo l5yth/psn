@@ -130,7 +130,7 @@ fn begin_signal_confirmation_sets_pending_prompt() {
     app.begin_signal_confirmation(1);
 
     let prompt = app.confirmation_prompt().expect("prompt should exist");
-    assert!(prompt.contains("Confirm sending SIGHUP (1)"));
+    assert!(prompt.contains("confirm sending SIGHUP (1)"));
     assert!(prompt.contains("process p123 (123)"));
 }
 
@@ -175,6 +175,53 @@ fn confirm_signal_updates_failure_status_and_clears_pending() {
 
     assert!(app.status.contains("failed"));
     assert!(app.pending_confirmation.is_none());
+}
+
+#[test]
+fn confirm_signal_without_pending_is_noop() {
+    let mut app = App::with_rows(None, vec![row(123)]);
+    app.status = "keep".to_string();
+    let mut sender = |_, _| Err("should not run".to_string());
+    app.confirm_signal(&mut sender);
+    assert_eq!(app.status, "keep");
+}
+
+#[test]
+fn pending_target_matches_current_rows_true_for_same_name_and_pid() {
+    let mut app = App::with_rows(None, vec![row(100)]);
+    app.begin_signal_confirmation(1);
+    assert!(app.pending_target_matches_current_rows());
+}
+
+#[test]
+fn pending_target_matches_current_rows_false_when_target_changed() {
+    let mut app = App::with_rows(None, vec![row(100)]);
+    app.begin_signal_confirmation(1);
+    app.rows = vec![row(101)];
+    assert!(!app.pending_target_matches_current_rows());
+}
+
+#[test]
+fn pending_target_matches_current_rows_false_without_pending() {
+    let app = App::with_rows(None, vec![row(100)]);
+    assert!(!app.pending_target_matches_current_rows());
+}
+
+#[test]
+fn abort_pending_target_changed_sets_status_and_clears_pending() {
+    let mut app = App::with_rows(None, vec![row(100)]);
+    app.begin_signal_confirmation(1);
+    app.abort_pending_target_changed();
+    assert!(app.status.contains("aborted: process"));
+    assert!(app.pending_confirmation.is_none());
+}
+
+#[test]
+fn abort_pending_target_changed_without_pending_is_noop() {
+    let mut app = App::with_rows(None, vec![row(100)]);
+    app.status = "keep".to_string();
+    app.abort_pending_target_changed();
+    assert_eq!(app.status, "keep");
 }
 
 #[test]
