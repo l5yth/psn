@@ -16,7 +16,7 @@
 
 //! Tree ordering helpers shared by rendering and row-selection logic.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::{model::ProcRow, process::status_priority};
 
@@ -43,6 +43,7 @@ pub fn display_order_with_prefix(rows: &[ProcRow]) -> Vec<(usize, String)> {
     }
 
     let mut ordered: Vec<(usize, String)> = Vec::with_capacity(rows.len());
+    let mut visited: HashSet<usize> = HashSet::with_capacity(rows.len());
     for (root_pos, root) in roots.iter().enumerate() {
         let is_last_root = root_pos + 1 == roots.len();
         walk_tree(
@@ -50,10 +51,30 @@ pub fn display_order_with_prefix(rows: &[ProcRow]) -> Vec<(usize, String)> {
             rows,
             &children,
             &mut ordered,
+            &mut visited,
             &[],
             is_last_root,
             true,
         );
+    }
+
+    if visited.len() < rows.len() {
+        let mut remaining: Vec<usize> = (0..rows.len())
+            .filter(|idx| !visited.contains(idx))
+            .collect();
+        sort_indices(&mut remaining, rows);
+        for idx in remaining {
+            walk_tree(
+                idx,
+                rows,
+                &children,
+                &mut ordered,
+                &mut visited,
+                &[],
+                true,
+                true,
+            );
+        }
     }
     ordered
 }
@@ -80,10 +101,15 @@ fn walk_tree(
     rows: &[ProcRow],
     children: &HashMap<i32, Vec<usize>>,
     ordered: &mut Vec<(usize, String)>,
+    visited: &mut HashSet<usize>,
     ancestor_has_next: &[bool],
     is_last: bool,
     is_root: bool,
 ) {
+    if !visited.insert(idx) {
+        return;
+    }
+
     let mut prefix = String::new();
     for has_next in ancestor_has_next {
         if *has_next {
@@ -114,6 +140,7 @@ fn walk_tree(
                 rows,
                 children,
                 ordered,
+                visited,
                 &next_ancestors,
                 child_is_last,
                 false,
@@ -131,4 +158,37 @@ fn sort_indices(indices: &mut [usize], rows: &[ProcRow]) {
             .then(rows[*left].user.as_ref().cmp(rows[*right].user.as_ref()))
             .then(rows[*left].cmd.cmp(&rows[*right].cmd))
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::display_order_indices;
+    use crate::model::ProcRow;
+    use std::sync::Arc;
+    use sysinfo::ProcessStatus;
+
+    fn row(pid: i32, ppid: Option<i32>, ancestors: Vec<i32>, name: &str) -> ProcRow {
+        ProcRow {
+            pid,
+            ppid,
+            ancestor_chain: ancestors,
+            user: Arc::from("user"),
+            status: ProcessStatus::Sleep,
+            name: name.to_string(),
+            cmd: name.to_string(),
+        }
+    }
+
+    #[test]
+    fn display_order_indices_keeps_rows_when_parent_graph_is_cycle_only() {
+        let rows = vec![
+            row(2, Some(3), vec![3, 2], "a"),
+            row(3, Some(2), vec![2, 3], "b"),
+        ];
+
+        let order = display_order_indices(&rows);
+        assert_eq!(order.len(), 2);
+        assert!(order.contains(&0));
+        assert!(order.contains(&1));
+    }
 }

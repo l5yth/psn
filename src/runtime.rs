@@ -16,13 +16,19 @@
 
 //! Input mapping and runtime action application for the TUI loop.
 
-use std::cmp::min;
+use std::{cmp::min, io, time::Duration};
 
 use anyhow::Result;
-use crossterm::event::KeyCode;
+use crossterm::event::{Event, KeyCode, KeyEventKind};
+use crossterm::{
+    event, execute,
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+};
 use nix::sys::signal::Signal;
+use ratatui::{Terminal, prelude::CrosstermBackend};
+use sysinfo::System;
 
-use crate::{app::App, model::ProcRow};
+use crate::{app::App, model::ProcRow, process, signal, ui};
 
 /// Number of rows moved by page navigation actions.
 pub const PAGE_STEP: usize = 10;
@@ -183,6 +189,99 @@ pub fn apply_action(
     }
 }
 
+/// Run the interactive loop using injectable draw and event hooks.
+pub fn run_event_loop(
+    app: &mut App,
+    draw: &mut dyn FnMut(&mut App) -> Result<()>,
+    next_event: &mut dyn FnMut(Duration) -> Result<Option<Event>>,
+    refresh_rows: &mut dyn FnMut() -> Vec<ProcRow>,
+    sender: &mut dyn FnMut(i32, Signal) -> Result<(), String>,
+) -> Result<()> {
+    let mut needs_redraw = true;
+
+    loop {
+        if needs_redraw {
+            draw(app)?;
+            needs_redraw = false;
+        }
+
+        if let Some(event) = next_event(Duration::from_millis(250))? {
+            match event {
+                Event::Resize(_, _) => {
+                    needs_redraw = true;
+                }
+                Event::Key(key) => {
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
+
+                    let action =
+                        map_key_event_to_action(key.code, app.pending_confirmation.is_some());
+                    let outcome = apply_action(app, action, refresh_rows, sender);
+                    if outcome.should_quit {
+                        break;
+                    }
+                    needs_redraw |= outcome.needs_redraw;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Run the interactive terminal session with concrete TUI/system dependencies.
+pub fn run_interactive(
+    filter: Option<String>,
+    compiled_filter: Option<process::FilterSpec>,
+    user_only: bool,
+) -> Result<()> {
+    let mut terminal = setup_terminal()?;
+    let mut sys = System::new_all();
+    let initial_rows = process::refresh_rows(&mut sys, compiled_filter.as_ref(), user_only);
+    let mut app = App::with_rows(filter, initial_rows);
+
+    let mut draw = |app: &mut App| -> Result<()> {
+        terminal.draw(|frame| ui::render(frame, app))?;
+        Ok(())
+    };
+    let mut next_event = |timeout| -> Result<Option<Event>> {
+        if event::poll(timeout)? {
+            Ok(Some(event::read()?))
+        } else {
+            Ok(None)
+        }
+    };
+    let mut refresh_rows = || process::refresh_rows(&mut sys, compiled_filter.as_ref(), user_only);
+    let mut sender = |pid, sig| signal::send_signal(pid, sig).map_err(|err| err.to_string());
+    let run_result = run_event_loop(
+        &mut app,
+        &mut draw,
+        &mut next_event,
+        &mut refresh_rows,
+        &mut sender,
+    );
+
+    restore_terminal(terminal);
+    run_result
+}
+
+/// Configure terminal raw mode and alternate screen for TUI rendering.
+fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen)?;
+    Ok(Terminal::new(CrosstermBackend::new(stdout))?)
+}
+
+/// Restore terminal state after TUI execution, ignoring restoration failures.
+fn restore_terminal(mut terminal: Terminal<CrosstermBackend<io::Stdout>>) {
+    let _ = disable_raw_mode();
+    let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
+    let _ = terminal.show_cursor();
+}
+
 /// Refresh rows while keeping selection bounded to the previous index.
 fn refresh_with_selection_preserved(app: &mut App, refresh_rows: &mut dyn FnMut() -> Vec<ProcRow>) {
     let selected_before_refresh = app.table_state.selected().unwrap_or(0);
@@ -195,11 +294,12 @@ fn refresh_with_selection_preserved(app: &mut App, refresh_rows: &mut dyn FnMut(
 
 #[cfg(test)]
 mod tests {
-    use super::{Action, ActionResult, apply_action, map_key_event_to_action};
+    use super::{Action, ActionResult, apply_action, map_key_event_to_action, run_event_loop};
     use crate::{app::App, model::ProcRow};
-    use crossterm::event::KeyCode;
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
     use nix::sys::signal::Signal;
     use std::sync::Arc;
+    use std::time::Duration;
     use sysinfo::ProcessStatus;
 
     fn row(pid: i32, name: &str) -> ProcRow {
@@ -458,5 +558,36 @@ mod tests {
             }
         );
         assert_eq!(app.table_state.selected(), selected);
+    }
+
+    #[test]
+    fn run_event_loop_redraws_on_resize_and_exits_on_q() {
+        let mut app = App::with_rows(None, vec![row(11, "foo")]);
+        let mut draw_calls = 0;
+        let mut draw = |_: &mut App| -> anyhow::Result<()> {
+            draw_calls += 1;
+            Ok(())
+        };
+
+        let mut events = vec![
+            Event::Resize(100, 20),
+            Event::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE)),
+        ]
+        .into_iter();
+        let mut next_event =
+            |_timeout: Duration| -> anyhow::Result<Option<Event>> { Ok(events.next()) };
+        let mut refresh = || vec![row(11, "foo")];
+        let mut sender = |_: i32, _: Signal| Ok(());
+
+        run_event_loop(
+            &mut app,
+            &mut draw,
+            &mut next_event,
+            &mut refresh,
+            &mut sender,
+        )
+        .expect("loop should terminate cleanly");
+
+        assert!(draw_calls >= 2);
     }
 }
