@@ -30,15 +30,25 @@ pub const PAGE_STEP: usize = 10;
 /// Mapped high-level actions produced from key input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
+    /// Exit the main event loop.
     Quit,
+    /// Refresh process rows from the system.
     Refresh,
+    /// Move selection one row up.
     MoveUp,
+    /// Move selection one row down.
     MoveDown,
+    /// Move selection one page up.
     PageUp,
+    /// Move selection one page down.
     PageDown,
+    /// Open signal confirmation for a digit-mapped signal.
     BeginSignalConfirmation(u8),
+    /// Confirm and dispatch the pending signal action.
     ConfirmPendingSignal,
+    /// Cancel the pending signal action.
     CancelPendingSignal,
+    /// Intentionally perform no state change.
     Noop,
 }
 
@@ -125,6 +135,7 @@ pub fn apply_action(
     }
 }
 
+/// Refresh rows while keeping selection bounded to the previous index.
 fn refresh_with_selection_preserved(app: &mut App, refresh_rows: &mut dyn FnMut() -> Vec<ProcRow>) {
     let selected_before_refresh = app.table_state.selected().unwrap_or(0);
     app.refresh_preserving_status(refresh_rows());
@@ -183,6 +194,7 @@ mod tests {
             map_key_event_to_action(KeyCode::Char('0'), false),
             Action::Noop
         );
+        assert_eq!(map_key_event_to_action(KeyCode::Left, false), Action::Noop);
     }
 
     #[test]
@@ -244,5 +256,125 @@ mod tests {
             &mut sender
         ));
         assert!(app.pending_confirmation.is_none());
+    }
+
+    #[test]
+    fn apply_action_quit_returns_true() {
+        let mut app = App::with_rows(None, vec![row(11, "foo")]);
+        let mut refresh = || vec![row(11, "foo")];
+        let mut sender = |_: i32, _: Signal| Ok(());
+        assert!(apply_action(
+            &mut app,
+            Action::Quit,
+            &mut refresh,
+            &mut sender
+        ));
+    }
+
+    #[test]
+    fn apply_action_refresh_reloads_rows() {
+        let mut app = App::with_rows(None, vec![row(11, "foo")]);
+        let mut refresh = || vec![row(22, "bar")];
+        let mut sender = |_: i32, _: Signal| Ok(());
+        assert!(!apply_action(
+            &mut app,
+            Action::Refresh,
+            &mut refresh,
+            &mut sender
+        ));
+        assert_eq!(app.rows[0].pid, 22);
+    }
+
+    #[test]
+    fn apply_action_move_actions_change_selection() {
+        let mut app = App::with_rows(None, vec![row(11, "foo"), row(22, "bar"), row(33, "baz")]);
+        let mut refresh = || vec![row(11, "foo"), row(22, "bar"), row(33, "baz")];
+        let mut sender = |_: i32, _: Signal| Ok(());
+
+        assert!(!apply_action(
+            &mut app,
+            Action::MoveDown,
+            &mut refresh,
+            &mut sender
+        ));
+        assert_eq!(app.table_state.selected(), Some(1));
+
+        assert!(!apply_action(
+            &mut app,
+            Action::MoveUp,
+            &mut refresh,
+            &mut sender
+        ));
+        assert_eq!(app.table_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn apply_action_page_actions_change_selection() {
+        let rows: Vec<ProcRow> = (0..25).map(|i| row(i + 1, "p")).collect();
+        let mut app = App::with_rows(None, rows.clone());
+        let mut refresh = || rows.clone();
+        let mut sender = |_: i32, _: Signal| Ok(());
+
+        assert!(!apply_action(
+            &mut app,
+            Action::PageDown,
+            &mut refresh,
+            &mut sender
+        ));
+        assert_eq!(app.table_state.selected(), Some(10));
+
+        assert!(!apply_action(
+            &mut app,
+            Action::PageUp,
+            &mut refresh,
+            &mut sender
+        ));
+        assert_eq!(app.table_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn apply_action_begin_signal_confirmation_sets_pending() {
+        let mut app = App::with_rows(None, vec![row(11, "foo")]);
+        let mut refresh = || vec![row(11, "foo")];
+        let mut sender = |_: i32, _: Signal| Ok(());
+
+        assert!(!apply_action(
+            &mut app,
+            Action::BeginSignalConfirmation(1),
+            &mut refresh,
+            &mut sender
+        ));
+        assert!(app.pending_confirmation.is_some());
+    }
+
+    #[test]
+    fn apply_action_confirm_pending_signal_aborts_on_target_change() {
+        let mut app = App::with_rows(None, vec![row(11, "foo")]);
+        app.begin_signal_confirmation(1);
+        let mut refresh = || vec![row(22, "bar")];
+        let mut sender = |_: i32, _: Signal| Ok(());
+
+        assert!(!apply_action(
+            &mut app,
+            Action::ConfirmPendingSignal,
+            &mut refresh,
+            &mut sender
+        ));
+        assert!(app.status.contains("aborted"));
+    }
+
+    #[test]
+    fn apply_action_noop_is_noop() {
+        let mut app = App::with_rows(None, vec![row(11, "foo")]);
+        let mut refresh = || vec![row(11, "foo")];
+        let mut sender = |_: i32, _: Signal| Ok(());
+        let selected = app.table_state.selected();
+        assert!(!apply_action(
+            &mut app,
+            Action::Noop,
+            &mut refresh,
+            &mut sender
+        ));
+        assert_eq!(app.table_state.selected(), selected);
     }
 }

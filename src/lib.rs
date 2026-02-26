@@ -78,6 +78,7 @@ pub fn run(filter: Option<String>, regex_mode: bool, user_only: bool) -> Result<
     run_result
 }
 
+/// Configure terminal raw mode and alternate screen for TUI rendering.
 fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -85,6 +86,7 @@ fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
     Ok(Terminal::new(CrosstermBackend::new(stdout))?)
 }
 
+/// Restore terminal state after TUI execution, ignoring restoration failures.
 fn restore_terminal(mut terminal: Terminal<CrosstermBackend<io::Stdout>>) {
     let _ = disable_raw_mode();
     let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);

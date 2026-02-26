@@ -113,6 +113,10 @@ pub fn matches_filter(row: &ProcRow, filter: Option<&FilterSpec>) -> bool {
     }
 }
 
+/// Check whether `haystack` contains `needle` case-insensitively.
+///
+/// Uses an ASCII fast-path with zero allocations and falls back to Unicode
+/// lowercasing when non-ASCII matching is required.
 fn contains_case_insensitive(
     haystack: &str,
     needle_raw: &str,
@@ -232,6 +236,8 @@ pub fn refresh_rows(
     rows
 }
 
+/// Resolve user display text with per-refresh memoization to avoid repeated
+/// uid lookups for processes owned by the same user.
 fn resolve_user_cached(uid: Option<&Uid>, cache: &mut HashMap<String, String>) -> String {
     let Some(uid_value) = uid else {
         return "?".to_string();
@@ -251,10 +257,11 @@ fn resolve_user_cached(uid: Option<&Uid>, cache: &mut HashMap<String, String>) -
 mod tests {
     use super::{
         FilterSpec, MAX_REGEX_PATTERN_LEN, build_cmd, compile_filter, matches_filter, refresh_rows,
-        sort_rows, status_dot_color, status_priority, to_user,
+        resolve_user_cached, sort_rows, status_dot_color, status_priority, to_user,
     };
     use crate::model::ProcRow;
     use ratatui::style::Color;
+    use std::collections::HashMap;
     use std::{ffi::OsString, path::Path};
     use sysinfo::{ProcessStatus, System, Uid};
 
@@ -435,5 +442,32 @@ mod tests {
     fn refresh_rows_user_only_applies_current_uid_branch() {
         let mut sys = System::new_all();
         let _rows = refresh_rows(&mut sys, None, true);
+    }
+
+    #[test]
+    fn matches_filter_handles_empty_and_non_ascii_substring() {
+        let r = row(1, "Ångström", ProcessStatus::Run, "/usr/bin/ångström");
+        assert!(matches_filter(
+            &r,
+            Some(&FilterSpec::Substring {
+                raw: "".to_string(),
+                lowered: "".to_string(),
+                ascii_only: true,
+            })
+        ));
+        assert!(matches_filter(
+            &r,
+            Some(&FilterSpec::Substring {
+                raw: "ång".to_string(),
+                lowered: "ång".to_string(),
+                ascii_only: false,
+            })
+        ));
+    }
+
+    #[test]
+    fn resolve_user_cached_handles_missing_uid() {
+        let mut cache = HashMap::new();
+        assert_eq!(resolve_user_cached(None, &mut cache), "?");
     }
 }
