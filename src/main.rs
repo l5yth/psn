@@ -19,7 +19,14 @@ use psn::cli::{CliCommand, help_text, parse_args, version_text};
 
 /// Binary entry point. Delegates to CLI parsing and runtime.
 fn main() -> Result<()> {
-    match parse_args(std::env::args())? {
+    dispatch_command(parse_args(std::env::args())?, &mut psn::run)
+}
+
+fn dispatch_command(
+    command: CliCommand,
+    runner: &mut dyn FnMut(Option<String>, bool, bool) -> Result<()>,
+) -> Result<()> {
+    match command {
         CliCommand::Help => {
             println!("{}", help_text());
             Ok(())
@@ -32,6 +39,62 @@ fn main() -> Result<()> {
             filter,
             regex_mode,
             user_only,
-        } => psn::run(filter, regex_mode, user_only),
+        } => runner(filter, regex_mode, user_only),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::dispatch_command;
+    use anyhow::Result;
+    use psn::cli::CliCommand;
+
+    fn no_op_runner(_: Option<String>, _: bool, _: bool) -> Result<()> {
+        Ok(())
+    }
+
+    #[test]
+    fn dispatch_command_help_returns_ok() {
+        let mut runner = no_op_runner;
+        assert!(dispatch_command(CliCommand::Help, &mut runner).is_ok());
+    }
+
+    #[test]
+    fn dispatch_command_version_returns_ok() {
+        let mut runner = no_op_runner;
+        assert!(dispatch_command(CliCommand::Version, &mut runner).is_ok());
+    }
+
+    #[test]
+    fn dispatch_command_run_calls_runner_with_expected_values() {
+        let mut called = false;
+        let mut runner =
+            |filter: Option<String>, regex_mode: bool, user_only: bool| -> Result<()> {
+                called = true;
+                assert_eq!(filter.as_deref(), Some("ssh"));
+                assert!(regex_mode);
+                assert!(user_only);
+                Ok(())
+            };
+
+        let command = CliCommand::Run {
+            filter: Some("ssh".to_string()),
+            regex_mode: true,
+            user_only: true,
+        };
+
+        assert!(dispatch_command(command, &mut runner).is_ok());
+        assert!(called);
+    }
+
+    #[test]
+    fn dispatch_command_run_works_with_no_op_runner() {
+        let mut runner = no_op_runner;
+        let command = CliCommand::Run {
+            filter: None,
+            regex_mode: false,
+            user_only: false,
+        };
+        assert!(dispatch_command(command, &mut runner).is_ok());
     }
 }

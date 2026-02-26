@@ -274,6 +274,25 @@ mod tests {
     }
 
     #[test]
+    fn compile_filter_accepts_none_and_substring_and_regex() {
+        assert!(
+            compile_filter(None, false)
+                .expect("none should parse")
+                .is_none()
+        );
+
+        let substring = compile_filter(Some("ssh".to_string()), false)
+            .expect("substring should parse")
+            .expect("substring filter should exist");
+        assert!(matches!(substring, FilterSpec::Substring(_)));
+
+        let regex = compile_filter(Some("^ssh$".to_string()), true)
+            .expect("regex should parse")
+            .expect("regex filter should exist");
+        assert!(matches!(regex, FilterSpec::Regex(_)));
+    }
+
+    #[test]
     fn status_priority_covers_all_known_variants() {
         let statuses = [
             ProcessStatus::Run,
@@ -340,5 +359,11 @@ mod tests {
         let filter = FilterSpec::Substring("__psn_filter_that_should_not_exist__".to_string());
         let rows = refresh_rows(&mut sys, Some(&filter), false);
         assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn refresh_rows_user_only_applies_current_uid_branch() {
+        let mut sys = System::new_all();
+        let _rows = refresh_rows(&mut sys, None, true);
     }
 }

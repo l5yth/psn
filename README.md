@@ -93,8 +93,8 @@ psn -f "systemd"
 psn --filter "python"
 
 # regex filter
-psn -r '^ssh(d|agent)$'
-psn --regex '^(nginx|apache2)$'
+psn -r 'ssh(d|agent)'
+psn --regex '(nginx|apache2)'
 
 # current user only
 psn -u

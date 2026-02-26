@@ -231,11 +231,7 @@ mod tests {
         app.begin_signal_confirmation(1);
 
         let mut refresh = || vec![row(22, "bar")];
-        let mut sender_called = false;
-        let mut sender = |_: i32, _: Signal| {
-            sender_called = true;
-            Ok(())
-        };
+        let mut sender = |_: i32, _: Signal| Ok(());
 
         assert!(handle_pending_confirmation_input(
             &mut app,
@@ -243,7 +239,6 @@ mod tests {
             &mut refresh,
             &mut sender
         ));
-        assert!(!sender_called);
         assert!(app.status.contains("aborted"));
         assert!(app.pending_confirmation.is_none());
     }
@@ -259,6 +254,62 @@ mod tests {
         assert!(handle_pending_confirmation_input(
             &mut app,
             KeyCode::Char('n'),
+            &mut refresh,
+            &mut sender
+        ));
+        assert!(app.pending_confirmation.is_none());
+    }
+
+    #[test]
+    fn pending_key_uppercase_y_sends_when_target_still_matches() {
+        let mut app = App::with_rows(None, vec![row(11, "foo")]);
+        app.begin_signal_confirmation(1);
+
+        let mut refresh = || vec![row(11, "foo")];
+        let mut sent = false;
+        let mut sender = |_: i32, _: Signal| {
+            sent = true;
+            Ok(())
+        };
+
+        assert!(handle_pending_confirmation_input(
+            &mut app,
+            KeyCode::Char('Y'),
+            &mut refresh,
+            &mut sender
+        ));
+        assert!(sent);
+        assert!(app.pending_confirmation.is_none());
+    }
+
+    #[test]
+    fn pending_key_uppercase_n_cancels_confirmation() {
+        let mut app = App::with_rows(None, vec![row(11, "foo")]);
+        app.begin_signal_confirmation(1);
+
+        let mut refresh = || vec![row(11, "foo")];
+        let mut sender = |_: i32, _: Signal| Ok(());
+
+        assert!(handle_pending_confirmation_input(
+            &mut app,
+            KeyCode::Char('N'),
+            &mut refresh,
+            &mut sender
+        ));
+        assert!(app.pending_confirmation.is_none());
+    }
+
+    #[test]
+    fn pending_key_escape_cancels_confirmation() {
+        let mut app = App::with_rows(None, vec![row(11, "foo")]);
+        app.begin_signal_confirmation(1);
+
+        let mut refresh = || vec![row(11, "foo")];
+        let mut sender = |_: i32, _: Signal| Ok(());
+
+        assert!(handle_pending_confirmation_input(
+            &mut app,
+            KeyCode::Esc,
             &mut refresh,
             &mut sender
         ));

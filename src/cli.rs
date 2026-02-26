@@ -46,9 +46,9 @@ where
 
     let mut positionals: Vec<String> = Vec::new();
     let mut filter_from_option: Option<String> = None;
+    let mut regex_from_option: Option<String> = None;
     let mut wants_help = false;
     let mut wants_version = false;
-    let mut regex_mode = false;
     let mut user_only = false;
     let mut saw_valid_option = false;
     let mut iter = args.into_iter();
@@ -68,8 +68,17 @@ where
                 saw_valid_option = true;
             }
             "-r" | "--regex" => {
-                regex_mode = true;
                 saw_valid_option = true;
+                if filter_from_option.is_some() || regex_from_option.is_some() {
+                    bail!("cannot combine --regex with -f/--filter");
+                }
+                let value = iter
+                    .next()
+                    .ok_or_else(|| anyhow!("{arg} requires a PATTERN value"))?;
+                if value.is_empty() {
+                    bail!("{arg} requires a non-empty PATTERN value");
+                }
+                regex_from_option = Some(value);
             }
             "-u" | "--user" => {
                 user_only = true;
@@ -83,14 +92,19 @@ where
                 if filter_from_option.is_some() {
                     bail!("FILTER specified multiple times");
                 }
+                if regex_from_option.is_some() {
+                    bail!("cannot combine --regex with -f/--filter");
+                }
+                if value.is_empty() {
+                    bail!("{arg} requires a non-empty FILTER value");
+                }
                 filter_from_option = Some(value);
             }
             _ if arg.starts_with('-') => {
+                if arg.starts_with("--") {
+                    bail!("unknown option: {arg}");
+                }
                 if saw_valid_option {
-                    if regex_mode && filter_from_option.is_none() && positionals.is_empty() {
-                        positionals.push(arg);
-                        continue;
-                    }
                     bail!("unknown option: {arg}");
                 }
                 if !positionals.is_empty() || filter_from_option.is_some() {
@@ -111,21 +125,25 @@ where
     }
 
     if wants_help {
-        if !positionals.is_empty() || filter_from_option.is_some() || regex_mode || user_only {
+        if !positionals.is_empty()
+            || filter_from_option.is_some()
+            || regex_from_option.is_some()
+            || user_only
+        {
             bail!("--help does not accept FILTER");
         }
         return Ok(CliCommand::Help);
     }
 
     if wants_version {
-        if !positionals.is_empty() || filter_from_option.is_some() || regex_mode || user_only {
+        if !positionals.is_empty()
+            || filter_from_option.is_some()
+            || regex_from_option.is_some()
+            || user_only
+        {
             bail!("--version does not accept FILTER");
         }
         return Ok(CliCommand::Version);
-    }
-
-    if regex_mode && filter_from_option.is_some() {
-        bail!("cannot combine --regex with -f/--filter");
     }
 
     if let Some(filter) = filter_from_option {
@@ -136,24 +154,15 @@ where
         });
     }
 
-    if regex_mode {
-        match positionals.as_slice() {
-            [] => {
-                return Ok(CliCommand::Run {
-                    filter: None,
-                    regex_mode: true,
-                    user_only,
-                });
-            }
-            [pattern] => {
-                return Ok(CliCommand::Run {
-                    filter: Some(pattern.clone()),
-                    regex_mode: true,
-                    user_only,
-                });
-            }
-            _ => bail!("too many PATTERN arguments for --regex"),
+    if let Some(pattern) = regex_from_option {
+        if !positionals.is_empty() {
+            bail!("too many PATTERN arguments for --regex");
         }
+        return Ok(CliCommand::Run {
+            filter: Some(pattern),
+            regex_mode: true,
+            user_only,
+        });
     }
 
     if saw_valid_option && !positionals.is_empty() {
@@ -294,7 +303,6 @@ mod tests {
     fn parse_args_regex_option_works_without_filter_flag() {
         let short = parse_args(["psn", "-r", "sshd.*"]).expect("parse should succeed");
         let long = parse_args(["psn", "--regex", "sshd.*"]).expect("parse should succeed");
-        let none = parse_args(["psn", "--regex"]).expect("parse should succeed");
 
         assert_eq!(
             short,
@@ -312,14 +320,13 @@ mod tests {
                 user_only: false
             }
         );
-        assert_eq!(
-            none,
-            CliCommand::Run {
-                filter: None,
-                regex_mode: true,
-                user_only: false
-            }
-        );
+    }
+
+    #[test]
+    fn parse_args_regex_requires_pattern() {
+        assert!(parse_args(["psn", "-r"]).is_err());
+        assert!(parse_args(["psn", "--regex"]).is_err());
+        assert!(parse_args(["psn", "-r", ""]).is_err());
     }
 
     #[test]
@@ -339,6 +346,25 @@ mod tests {
     fn parse_args_unknown_flag_errors_after_known_option() {
         assert!(parse_args(["psn", "-h", "--wat"]).is_err());
         assert!(parse_args(["psn", "-f", "sshd", "--wat"]).is_err());
+        assert!(parse_args(["psn", "-u", "-wat"]).is_err());
+    }
+
+    #[test]
+    fn parse_args_unknown_long_option_errors() {
+        assert!(parse_args(["psn", "--wat"]).is_err());
+    }
+
+    #[test]
+    fn parse_args_unknown_short_before_options_is_filter() {
+        let cmd = parse_args(["psn", "-wat"]).expect("parse should succeed");
+        assert_eq!(
+            cmd,
+            CliCommand::Run {
+                filter: Some("-wat".to_string()),
+                regex_mode: false,
+                user_only: false
+            }
+        );
     }
 
     #[test]
@@ -346,7 +372,6 @@ mod tests {
         assert!(parse_args(["psn", "-v", "sshd"]).is_err());
         assert!(parse_args(["psn", "--help", "sshd"]).is_err());
         assert!(parse_args(["psn", "-f", "sshd", "bash"]).is_err());
-        assert!(parse_args(["psn", "-h", "-r"]).is_err());
         assert!(parse_args(["psn", "-r", "x", "y"]).is_err());
     }
 
@@ -354,6 +379,58 @@ mod tests {
     fn parse_args_rejects_missing_filter_value_for_flag() {
         assert!(parse_args(["psn", "-f"]).is_err());
         assert!(parse_args(["psn", "--filter"]).is_err());
+    }
+
+    #[test]
+    fn parse_args_rejects_empty_filter_value_for_flag() {
+        assert!(parse_args(["psn", "-f", ""]).is_err());
+        assert!(parse_args(["psn", "--filter", ""]).is_err());
+    }
+
+    #[test]
+    fn parse_args_rejects_combined_filter_and_regex() {
+        assert!(parse_args(["psn", "-f", "ssh", "-r", "ssh.*"]).is_err());
+        assert!(parse_args(["psn", "-r", "ssh.*", "-f", "ssh"]).is_err());
+    }
+
+    #[test]
+    fn parse_args_rejects_duplicate_filter_option() {
+        assert!(parse_args(["psn", "-f", "a", "--filter", "b"]).is_err());
+    }
+
+    #[test]
+    fn parse_args_user_with_filter_and_regex_works() {
+        assert_eq!(
+            parse_args(["psn", "-u", "-f", "ssh"]).expect("parse should succeed"),
+            CliCommand::Run {
+                filter: Some("ssh".to_string()),
+                regex_mode: false,
+                user_only: true
+            }
+        );
+        assert_eq!(
+            parse_args(["psn", "-u", "-r", "^ssh(d|agent)$"]).expect("parse should succeed"),
+            CliCommand::Run {
+                filter: Some("^ssh(d|agent)$".to_string()),
+                regex_mode: true,
+                user_only: true
+            }
+        );
+    }
+
+    #[test]
+    fn parse_args_rejects_help_and_version_together() {
+        assert!(parse_args(["psn", "--help", "--version"]).is_err());
+    }
+
+    #[test]
+    fn parse_args_rejects_short_unknown_after_short_unknown_filter() {
+        assert!(parse_args(["psn", "-x", "-y"]).is_err());
+    }
+
+    #[test]
+    fn parse_args_rejects_positional_when_user_option_present() {
+        assert!(parse_args(["psn", "-u", "ssh"]).is_err());
     }
 
     #[test]
