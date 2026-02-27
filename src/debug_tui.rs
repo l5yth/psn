@@ -23,20 +23,23 @@ use std::{
 
 use anyhow::Result;
 use crossterm::event::{self, Event};
+use crossterm::{
+    execute,
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+};
+use ratatui::{Terminal, prelude::CrosstermBackend};
 use sysinfo::ProcessStatus;
 
-use crate::{app::App, model::ProcRow, runtime::run_event_loop, terminal::TerminalSession, ui};
+use crate::{app::App, model::ProcRow, runtime::run_event_loop, ui};
 
 const MAX_DEBUG_ROWS: usize = 21;
 
 /// Run the hidden debug-only TUI with synthetic process rows.
 pub(crate) fn run() -> Result<()> {
-    let mut terminal = TerminalSession::start()?;
+    let mut terminal = setup_terminal()?;
     let mut seed = initial_seed();
     let mut draw = |app: &mut App| -> Result<()> {
-        terminal
-            .terminal_mut()
-            .draw(|frame| ui::render(frame, app))?;
+        terminal.draw(|frame| ui::render(frame, app))?;
         Ok(())
     };
     let mut next_event = |timeout: Duration| -> Result<Option<Event>> {
@@ -50,17 +53,18 @@ pub(crate) fn run() -> Result<()> {
         seed = next_seed(seed);
         build_debug_rows(seed)
     };
-    let mut sender =
-        |_: i32, _: nix::sys::signal::Signal| Err("debug tui: signal suppressed".to_string());
+    let mut sender = debug_signal_sender;
     let mut app = App::with_rows(None, refresh_rows());
     app.status = "debug tui: synthetic rows only".to_string();
-    run_event_loop(
+    let result = run_event_loop(
         &mut app,
         &mut draw,
         &mut next_event,
         &mut refresh_rows,
         &mut sender,
-    )
+    );
+    restore_terminal(terminal);
+    result
 }
 
 fn build_debug_rows(seed: u64) -> Vec<ProcRow> {
@@ -86,7 +90,7 @@ fn build_debug_rows(seed: u64) -> Vec<ProcRow> {
     let pids: Vec<i32> = statuses
         .iter()
         .enumerate()
-        .map(|(index, _)| 4_000 + index as i32 * 17 + rng.next_in_range(0, 7) as i32)
+        .map(|(index, _)| 4_000 + index as i32 * 17)
         .collect();
 
     statuses
@@ -105,7 +109,7 @@ fn build_debug_rows(seed: u64) -> Vec<ProcRow> {
 
             ProcRow {
                 pid: pids[index],
-                start_time: 10_000 + rng.next_in_range(0, 9_999),
+                start_time: 10_000 + index as u64,
                 ppid,
                 ancestor_chain,
                 user,
@@ -117,6 +121,10 @@ fn build_debug_rows(seed: u64) -> Vec<ProcRow> {
             }
         })
         .collect()
+}
+
+fn debug_signal_sender(_: i32, _: nix::sys::signal::Signal) -> std::result::Result<(), String> {
+    Err("debug tui: signal suppressed".to_string())
 }
 
 fn debug_statuses() -> Vec<ProcessStatus> {
@@ -153,8 +161,8 @@ fn parent_index(index: usize) -> Option<usize> {
     match index {
         0 | 1 | 4 | 8 | 12 => None,
         2 | 3 => Some(1),
-        5 | 6 | 7 => Some(4),
-        9 | 10 | 11 => Some(8),
+        5..=7 => Some(4),
+        9..=11 => Some(8),
         _ => Some(index - 1),
     }
 }
@@ -189,6 +197,19 @@ fn next_seed(seed: u64) -> u64 {
     seed.wrapping_mul(6364136223846793005).wrapping_add(1)
 }
 
+fn setup_terminal() -> Result<Terminal<CrosstermBackend<std::io::Stdout>>> {
+    enable_raw_mode()?;
+    let mut stdout = std::io::stdout();
+    execute!(stdout, EnterAlternateScreen)?;
+    Ok(Terminal::new(CrosstermBackend::new(stdout))?)
+}
+
+fn restore_terminal(mut terminal: Terminal<CrosstermBackend<std::io::Stdout>>) {
+    let _ = disable_raw_mode();
+    let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
+    let _ = terminal.show_cursor();
+}
+
 struct DebugRng {
     state: u64,
 }
@@ -216,7 +237,10 @@ impl DebugRng {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_DEBUG_ROWS, build_debug_rows, debug_statuses, status_label};
+    use super::{
+        MAX_DEBUG_ROWS, build_debug_rows, debug_signal_sender, debug_statuses, status_label,
+    };
+    use nix::sys::signal::Signal;
     use std::collections::HashSet;
     use sysinfo::ProcessStatus;
 
@@ -245,5 +269,24 @@ mod tests {
     #[test]
     fn status_label_maps_unknown_status() {
         assert_eq!(status_label(&ProcessStatus::Unknown(7)), "unknown");
+    }
+
+    #[test]
+    fn build_debug_rows_keeps_identities_stable_across_refreshes() {
+        let first = build_debug_rows(123);
+        let second = build_debug_rows(456);
+
+        assert_eq!(first.len(), second.len());
+        for (first_row, second_row) in first.iter().zip(second.iter()) {
+            assert_eq!(first_row.pid, second_row.pid);
+            assert_eq!(first_row.start_time, second_row.start_time);
+            assert_eq!(first_row.status, second_row.status);
+        }
+    }
+
+    #[test]
+    fn debug_signal_sender_never_dispatches_real_signal() {
+        let result = debug_signal_sender(std::process::id() as i32, Signal::SIGKILL);
+        assert_eq!(result, Err("debug tui: signal suppressed".to_string()));
     }
 }

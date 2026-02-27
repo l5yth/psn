@@ -22,7 +22,6 @@ pub mod model;
 pub mod process;
 pub mod runtime;
 pub mod signal;
-mod terminal;
 pub mod tree;
 pub mod ui;
 

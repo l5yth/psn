@@ -48,11 +48,6 @@ where
         args.remove(0);
     }
 
-    #[cfg(all(feature = "debug_tui", debug_assertions))]
-    if args.iter().any(|arg| arg == "--debug-tui") {
-        return Ok(CliCommand::DebugTui);
-    }
-
     let mut positionals: Vec<String> = Vec::new();
     let mut filter_from_option: Option<String> = None;
     let mut regex_from_option: Option<String> = None;
@@ -68,6 +63,8 @@ where
                 positionals.extend(iter);
                 break;
             }
+            #[cfg(all(feature = "debug_tui", debug_assertions))]
+            "--debug-tui" => return Ok(CliCommand::DebugTui),
             "-h" | "--help" => {
                 wants_help = true;
                 saw_valid_option = true;
@@ -493,6 +490,27 @@ mod tests {
         assert_eq!(
             parse_args(["psn", "-u", "--debug-tui", "--wat"]).expect("parse should succeed"),
             CliCommand::DebugTui
+        );
+    }
+
+    #[cfg(all(feature = "debug_tui", debug_assertions))]
+    #[test]
+    fn parse_args_debug_tui_respects_option_boundaries() {
+        assert_eq!(
+            parse_args(["psn", "--", "--debug-tui"]).expect("parse should succeed"),
+            CliCommand::Run {
+                filter: Some("--debug-tui".to_string()),
+                regex_mode: false,
+                user_only: false
+            }
+        );
+        assert_eq!(
+            parse_args(["psn", "-f", "--debug-tui"]).expect("parse should succeed"),
+            CliCommand::Run {
+                filter: Some("--debug-tui".to_string()),
+                regex_mode: false,
+                user_only: false
+            }
         );
     }
 
