@@ -59,6 +59,8 @@ pub struct SignalConfirmation {
     pub signal: Signal,
     /// Target process id.
     pub pid: i32,
+    /// Target process start time to guard against pid reuse.
+    pub start_time: u64,
     /// Target process name.
     pub process_name: String,
 }
@@ -254,6 +256,7 @@ impl App {
             digit,
             signal,
             pid: row.pid,
+            start_time: row.start_time,
             process_name: row.name.clone(),
         });
     }
@@ -290,7 +293,7 @@ impl App {
 
         self.rows
             .iter()
-            .any(|row| row.pid == pending.pid && row.name == pending.process_name)
+            .any(|row| row.pid == pending.pid && row.start_time == pending.start_time)
     }
 
     /// Abort pending confirmation because the target no longer matches current rows.

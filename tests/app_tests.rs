@@ -199,7 +199,7 @@ fn refresh_preserves_selection_and_collapsed_state_when_titles_change() {
 
     assert_eq!(app.table_state.selected(), Some(0));
     assert!(app.collapsed_pids.contains(&2));
-    assert_eq!(app.expand_selected(), true);
+    assert!(app.expand_selected());
 }
 
 #[test]
@@ -483,6 +483,39 @@ fn pending_target_matches_current_rows_false_when_target_changed() {
     let mut app = App::with_rows(None, vec![row(100)]);
     app.begin_signal_confirmation(1);
     app.rows = vec![row(101)];
+    assert!(!app.pending_target_matches_current_rows());
+}
+
+#[test]
+fn pending_target_matches_current_rows_false_for_reused_pid_with_same_name() {
+    let mut app = App::with_rows(
+        None,
+        vec![ProcRow {
+            pid: 100,
+            start_time: 1,
+            ppid: None,
+            ancestor_chain: Vec::new(),
+            user: Arc::from("u"),
+            status: ProcessStatus::Run,
+            cpu_usage_tenths: 0,
+            memory_bytes: 0,
+            name: "worker".to_string(),
+            cmd: "/bin/worker".to_string(),
+        }],
+    );
+    app.begin_signal_confirmation(1);
+    app.rows = vec![ProcRow {
+        pid: 100,
+        start_time: 2,
+        ppid: None,
+        ancestor_chain: Vec::new(),
+        user: Arc::from("u"),
+        status: ProcessStatus::Run,
+        cpu_usage_tenths: 0,
+        memory_bytes: 0,
+        name: "worker".to_string(),
+        cmd: "/bin/worker".to_string(),
+    }];
     assert!(!app.pending_target_matches_current_rows());
 }
 
