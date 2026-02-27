@@ -16,12 +16,16 @@
 
 //! Application state and interaction logic.
 
-use std::cmp::min;
+use std::{cmp::min, collections::HashSet};
 
 use nix::sys::signal::Signal;
 use ratatui::widgets::TableState;
 
-use crate::{model::ProcRow, signal::signal_from_digit, tree::display_order_indices};
+use crate::{
+    model::ProcRow,
+    signal::signal_from_digit,
+    tree::{display_order_indices, display_rows},
+};
 
 /// Mutable application state shared between input handling and rendering.
 #[derive(Debug)]
@@ -36,6 +40,8 @@ pub struct App {
     pub status: String,
     /// Pending signal confirmation modal state.
     pub pending_confirmation: Option<SignalConfirmation>,
+    /// Pids whose visible descendants are hidden in tree mode.
+    pub collapsed_pids: HashSet<i32>,
 }
 
 /// Pending signal action that requires user confirmation.
@@ -63,6 +69,7 @@ impl App {
             table_state,
             status: String::new(),
             pending_confirmation: None,
+            collapsed_pids: HashSet::new(),
         }
     }
 
@@ -86,12 +93,16 @@ impl App {
     fn apply_rows(&mut self, rows: Vec<ProcRow>) {
         let selected_before = self.table_state.selected().unwrap_or(0);
         self.rows = rows;
+        let current_pids: HashSet<i32> = self.rows.iter().map(|row| row.pid).collect();
+        self.collapsed_pids
+            .retain(|pid| current_pids.contains(pid));
 
-        if self.rows.is_empty() {
+        let visible_count = self.visible_row_count();
+        if visible_count == 0 {
             self.table_state.select(None);
         } else {
             self.table_state
-                .select(Some(min(selected_before, self.rows.len() - 1)));
+                .select(Some(min(selected_before, visible_count - 1)));
         }
     }
 
@@ -106,11 +117,12 @@ impl App {
 
     /// Move selection one row down.
     pub fn move_down(&mut self) {
+        let visible_count = self.visible_row_count();
         if let Some(selected) = self.table_state.selected() {
-            if selected + 1 < self.rows.len() {
+            if selected + 1 < visible_count {
                 self.table_state.select(Some(selected + 1));
             }
-        } else if !self.rows.is_empty() {
+        } else if visible_count > 0 {
             self.table_state.select(Some(0));
         }
     }
@@ -133,18 +145,49 @@ impl App {
         }
 
         if let Some(selected) = self.table_state.selected() {
-            if self.rows.is_empty() {
+            let visible_count = self.visible_row_count();
+            if visible_count == 0 {
                 self.table_state.select(None);
                 return;
             }
 
-            let last_index = self.rows.len() - 1;
+            let last_index = visible_count - 1;
             let next_index = selected.saturating_add(step);
             self.table_state.select(Some(min(next_index, last_index)));
-        } else if !self.rows.is_empty() {
+        } else {
+            let visible_count = self.visible_row_count();
+            if visible_count == 0 {
+                return;
+            }
             self.table_state
-                .select(Some(min(step - 1, self.rows.len() - 1)));
+                .select(Some(min(step - 1, visible_count - 1)));
         }
+    }
+
+    /// Collapse the selected row when it currently shows descendants.
+    pub fn collapse_selected(&mut self) -> bool {
+        let Some(display_row) = self.selected_display_row() else {
+            return false;
+        };
+        if !display_row.has_children || display_row.is_collapsed {
+            return false;
+        }
+
+        let pid = self.rows[display_row.row_index].pid;
+        self.collapsed_pids.insert(pid)
+    }
+
+    /// Expand the selected row when it currently hides descendants.
+    pub fn expand_selected(&mut self) -> bool {
+        let Some(display_row) = self.selected_display_row() else {
+            return false;
+        };
+        if !display_row.is_collapsed {
+            return false;
+        }
+
+        let pid = self.rows[display_row.row_index].pid;
+        self.collapsed_pids.remove(&pid)
     }
 
     /// Send a digit-mapped signal to selected process through injected sender.
@@ -252,8 +295,19 @@ impl App {
 
     fn selected_row(&self) -> Option<&ProcRow> {
         let selected_display_index = self.table_state.selected()?;
-        let display_to_data = display_order_indices(&self.rows);
+        let display_to_data = display_order_indices(&self.rows, &self.collapsed_pids);
         let row_index = *display_to_data.get(selected_display_index)?;
         self.rows.get(row_index)
+    }
+
+    fn selected_display_row(&self) -> Option<crate::tree::DisplayRow> {
+        let selected_display_index = self.table_state.selected()?;
+        display_rows(&self.rows, &self.collapsed_pids)
+            .get(selected_display_index)
+            .cloned()
+    }
+
+    fn visible_row_count(&self) -> usize {
+        display_order_indices(&self.rows, &self.collapsed_pids).len()
     }
 }

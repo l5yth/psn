@@ -26,6 +26,8 @@ fn row(pid: i32) -> ProcRow {
         ancestor_chain: Vec::new(),
         user: Arc::from("u"),
         status: ProcessStatus::Run,
+        cpu_usage_tenths: 0,
+        memory_bytes: 0,
         name: format!("p{pid}"),
         cmd: format!("/bin/p{pid}"),
     }
@@ -334,29 +336,84 @@ fn page_down_clears_invalid_selection_when_rows_are_empty() {
 }
 
 #[test]
+fn collapse_selected_hides_descendants_and_expand_selected_restores_them() {
+    let mut app = App::with_rows(
+        None,
+        vec![
+            ProcRow {
+                pid: 2,
+                ppid: Some(1),
+                ancestor_chain: vec![1],
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                cpu_usage_tenths: 0,
+                memory_bytes: 0,
+                name: "service".to_string(),
+                cmd: "/bin/service".to_string(),
+            },
+            ProcRow {
+                pid: 3,
+                ppid: Some(2),
+                ancestor_chain: vec![2, 1],
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                cpu_usage_tenths: 0,
+                memory_bytes: 0,
+                name: "worker".to_string(),
+                cmd: "/bin/worker".to_string(),
+            },
+        ],
+    );
+
+    assert!(app.collapse_selected());
+    assert!(app.collapsed_pids.contains(&2));
+
+    app.page_down(1);
+    assert_eq!(app.table_state.selected(), Some(0));
+
+    assert!(app.expand_selected());
+    assert!(!app.collapsed_pids.contains(&2));
+
+    app.page_down(1);
+    assert_eq!(app.table_state.selected(), Some(1));
+}
+
+#[test]
+fn collapse_selected_noops_for_leaf_row() {
+    let mut app = App::with_rows(None, vec![row(1)]);
+
+    assert!(!app.collapse_selected());
+    assert!(app.collapsed_pids.is_empty());
+}
+
+#[test]
 fn begin_signal_confirmation_uses_visible_tree_selection_index() {
-    let parent = ProcRow {
+    let init = ProcRow {
         pid: 1,
         ppid: None,
         ancestor_chain: Vec::new(),
         user: Arc::from("u"),
         status: ProcessStatus::Sleep,
-        name: "parent".to_string(),
-        cmd: "/bin/parent".to_string(),
+        cpu_usage_tenths: 0,
+        memory_bytes: 0,
+        name: "init".to_string(),
+        cmd: "/bin/init".to_string(),
     };
-    let child = ProcRow {
+    let service = ProcRow {
         pid: 2,
         ppid: Some(1),
         ancestor_chain: vec![1],
         user: Arc::from("u"),
         status: ProcessStatus::Run,
-        name: "child".to_string(),
-        cmd: "/bin/child".to_string(),
+        cpu_usage_tenths: 0,
+        memory_bytes: 0,
+        name: "service".to_string(),
+        cmd: "/bin/service".to_string(),
     };
 
-    // Backing order differs from visual tree order (child first by status).
-    let mut app = App::with_rows(None, vec![child, parent]);
-    // Visual row 0 points to parent in tree mode.
+    // Backing order differs from visual tree order because pid 1 children are
+    // rendered as roots and roots are sorted by status first.
+    let mut app = App::with_rows(None, vec![init, service]);
     app.table_state.select(Some(0));
 
     app.begin_signal_confirmation(1);
@@ -364,6 +421,6 @@ fn begin_signal_confirmation_uses_visible_tree_selection_index() {
     let pending = app
         .pending_confirmation
         .expect("pending confirmation should exist");
-    assert_eq!(pending.pid, 1);
-    assert_eq!(pending.process_name, "parent");
+    assert_eq!(pending.pid, 2);
+    assert_eq!(pending.process_name, "service");
 }

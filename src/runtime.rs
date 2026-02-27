@@ -16,7 +16,7 @@
 
 //! Input mapping and runtime action application for the TUI loop.
 
-use std::{cmp::min, io, time::Duration};
+use std::{io, time::Duration};
 
 use anyhow::Result;
 use crossterm::event::{Event, KeyCode, KeyEventKind};
@@ -48,6 +48,10 @@ pub enum Action {
     PageUp,
     /// Move selection one page down.
     PageDown,
+    /// Collapse the selected tree row.
+    CollapseTree,
+    /// Expand the selected tree row.
+    ExpandTree,
     /// Open signal confirmation for a digit-mapped signal.
     BeginSignalConfirmation(u8),
     /// Confirm and dispatch the pending signal action.
@@ -86,6 +90,8 @@ pub fn map_key_event_to_action(key_code: KeyCode, pending_confirmation: bool) ->
         KeyCode::Down => Action::MoveDown,
         KeyCode::PageUp => Action::PageUp,
         KeyCode::PageDown => Action::PageDown,
+        KeyCode::Left => Action::CollapseTree,
+        KeyCode::Right => Action::ExpandTree,
         KeyCode::Char(c) if c.is_ascii_digit() => {
             let digit = c.to_digit(10).unwrap_or_default() as u8;
             if (1..=9).contains(&digit) {
@@ -149,6 +155,14 @@ pub fn apply_action(
                 needs_redraw: app.table_state.selected() != selected_before,
             }
         }
+        Action::CollapseTree => ActionResult {
+            should_quit: false,
+            needs_redraw: app.collapse_selected(),
+        },
+        Action::ExpandTree => ActionResult {
+            should_quit: false,
+            needs_redraw: app.expand_selected(),
+        },
         Action::BeginSignalConfirmation(digit) => {
             let had_pending = app.pending_confirmation.is_some();
             app.begin_signal_confirmation(digit);
@@ -294,12 +308,7 @@ fn restore_terminal(mut terminal: Terminal<CrosstermBackend<io::Stdout>>) {
 
 /// Refresh rows while keeping selection bounded to the previous index.
 fn refresh_with_selection_preserved(app: &mut App, refresh_rows: &mut dyn FnMut() -> Vec<ProcRow>) {
-    let selected_before_refresh = app.table_state.selected().unwrap_or(0);
     app.refresh_preserving_status(refresh_rows());
-    if !app.rows.is_empty() {
-        app.table_state
-            .select(Some(min(selected_before_refresh, app.rows.len() - 1)));
-    }
 }
 
 #[cfg(test)]
@@ -322,6 +331,8 @@ mod tests {
             ancestor_chain: Vec::new(),
             user: Arc::from("u"),
             status: ProcessStatus::Run,
+            cpu_usage_tenths: 0,
+            memory_bytes: 0,
             name: name.to_string(),
             cmd: format!("/bin/{name}"),
         }
@@ -351,6 +362,14 @@ mod tests {
             Action::PageDown
         );
         assert_eq!(
+            map_key_event_to_action(KeyCode::Left, false),
+            Action::CollapseTree
+        );
+        assert_eq!(
+            map_key_event_to_action(KeyCode::Right, false),
+            Action::ExpandTree
+        );
+        assert_eq!(
             map_key_event_to_action(KeyCode::Char('1'), false),
             Action::BeginSignalConfirmation(1)
         );
@@ -358,7 +377,6 @@ mod tests {
             map_key_event_to_action(KeyCode::Char('0'), false),
             Action::Noop
         );
-        assert_eq!(map_key_event_to_action(KeyCode::Left, false), Action::Noop);
     }
 
     #[test]
@@ -512,6 +530,55 @@ mod tests {
             }
         );
         assert_eq!(app.table_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn apply_action_tree_actions_toggle_collapsed_state() {
+        let rows = vec![
+            ProcRow {
+                pid: 2,
+                ppid: Some(1),
+                ancestor_chain: vec![1],
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                cpu_usage_tenths: 0,
+                memory_bytes: 0,
+                name: "service".to_string(),
+                cmd: "/bin/service".to_string(),
+            },
+            ProcRow {
+                pid: 3,
+                ppid: Some(2),
+                ancestor_chain: vec![2, 1],
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                cpu_usage_tenths: 0,
+                memory_bytes: 0,
+                name: "worker".to_string(),
+                cmd: "/bin/worker".to_string(),
+            },
+        ];
+        let mut app = App::with_rows(None, rows.clone());
+        let mut refresh = || rows.clone();
+        let mut sender = |_: i32, _: Signal| Ok(());
+
+        assert_eq!(
+            apply_action(&mut app, Action::CollapseTree, &mut refresh, &mut sender),
+            ActionResult {
+                should_quit: false,
+                needs_redraw: true
+            }
+        );
+        assert!(app.collapsed_pids.contains(&2));
+
+        assert_eq!(
+            apply_action(&mut app, Action::ExpandTree, &mut refresh, &mut sender),
+            ActionResult {
+                should_quit: false,
+                needs_redraw: true
+            }
+        );
+        assert!(!app.collapsed_pids.contains(&2));
     }
 
     #[test]

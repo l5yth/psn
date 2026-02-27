@@ -33,6 +33,10 @@ pub struct ProcRow {
     pub user: Arc<str>,
     /// Process status from sysinfo.
     pub status: ProcessStatus,
+    /// CPU usage in tenths of a percent, used for hidden sort ordering.
+    pub cpu_usage_tenths: u32,
+    /// Resident memory usage in bytes, used for hidden sort ordering.
+    pub memory_bytes: u64,
     /// Short process name.
     pub name: String,
     /// Full command line, when available.
