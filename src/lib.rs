@@ -25,6 +25,9 @@ pub mod signal;
 pub mod tree;
 pub mod ui;
 
+#[cfg(all(feature = "debug_tui", debug_assertions))]
+mod debug_tui;
+
 use crate::runtime::run_interactive;
 use anyhow::Result;
 
@@ -32,6 +35,13 @@ use anyhow::Result;
 pub fn run(filter: Option<String>, regex_mode: bool, user_only: bool) -> Result<()> {
     let compiled_filter = process::compile_filter(filter.clone(), regex_mode)?;
     run_interactive(filter, compiled_filter, user_only)
+}
+
+/// Run the hidden synthetic-data TUI used for local development.
+#[cfg(all(feature = "debug_tui", debug_assertions))]
+#[doc(hidden)]
+pub fn run_debug_tui() -> Result<()> {
+    debug_tui::run()
 }
 
 #[cfg(test)]
@@ -42,5 +52,12 @@ mod tests {
     fn run_returns_error_for_invalid_regex_before_terminal_setup() {
         let result = run(Some("(".to_string()), true, false);
         assert!(result.is_err());
+    }
+
+    #[cfg(all(feature = "debug_tui", debug_assertions))]
+    #[test]
+    fn run_debug_tui_symbol_is_available_when_feature_is_enabled() {
+        let debug_runner: fn() -> anyhow::Result<()> = super::run_debug_tui;
+        let _ = debug_runner;
     }
 }

@@ -267,16 +267,15 @@ pub fn run_interactive(
     };
     let mut refresh_rows = || process::refresh_rows(&mut sys, compiled_filter.as_ref(), user_only);
     let mut sender = |pid, sig| signal::send_signal(pid, sig).map_err(|err| err.to_string());
-    let run_result = run_with_runtime(
+    let result = run_with_runtime(
         filter,
         &mut draw,
         &mut next_event,
         &mut refresh_rows,
         &mut sender,
     );
-
     restore_terminal(terminal);
-    run_result
+    result
 }
 
 fn run_with_runtime(
