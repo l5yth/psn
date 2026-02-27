@@ -327,6 +327,7 @@ mod tests {
     fn row(pid: i32, name: &str) -> ProcRow {
         ProcRow {
             pid,
+            start_time: 0,
             ppid: None,
             ancestor_chain: Vec::new(),
             user: Arc::from("u"),
@@ -537,6 +538,7 @@ mod tests {
         let rows = vec![
             ProcRow {
                 pid: 2,
+                start_time: 0,
                 ppid: Some(1),
                 ancestor_chain: vec![1],
                 user: Arc::from("u"),
@@ -548,6 +550,7 @@ mod tests {
             },
             ProcRow {
                 pid: 3,
+                start_time: 0,
                 ppid: Some(2),
                 ancestor_chain: vec![2, 1],
                 user: Arc::from("u"),

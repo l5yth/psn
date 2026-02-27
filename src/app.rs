@@ -30,8 +30,7 @@ use crate::{
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct ProcessIdentity {
     pid: i32,
-    name: String,
-    cmd: String,
+    start_time: u64,
 }
 
 /// Mutable application state shared between input handling and rendering.
@@ -339,8 +338,7 @@ impl ProcessIdentity {
     fn from_row(row: &ProcRow) -> Self {
         Self {
             pid: row.pid,
-            name: row.name.clone(),
-            cmd: row.cmd.clone(),
+            start_time: row.start_time,
         }
     }
 }

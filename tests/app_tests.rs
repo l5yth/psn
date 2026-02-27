@@ -22,6 +22,7 @@ use sysinfo::ProcessStatus;
 fn row(pid: i32) -> ProcRow {
     ProcRow {
         pid,
+        start_time: 0,
         ppid: None,
         ancestor_chain: Vec::new(),
         user: Arc::from("u"),
@@ -75,6 +76,7 @@ fn refresh_preserves_selected_pid_when_sort_order_changes() {
         vec![
             ProcRow {
                 pid: 1,
+                start_time: 1,
                 ppid: None,
                 ancestor_chain: Vec::new(),
                 user: Arc::from("u"),
@@ -86,6 +88,7 @@ fn refresh_preserves_selected_pid_when_sort_order_changes() {
             },
             ProcRow {
                 pid: 2,
+                start_time: 2,
                 ppid: None,
                 ancestor_chain: Vec::new(),
                 user: Arc::from("u"),
@@ -102,6 +105,7 @@ fn refresh_preserves_selected_pid_when_sort_order_changes() {
     app.refresh(vec![
         ProcRow {
             pid: 1,
+            start_time: 1,
             ppid: None,
             ancestor_chain: Vec::new(),
             user: Arc::from("u"),
@@ -113,6 +117,7 @@ fn refresh_preserves_selected_pid_when_sort_order_changes() {
         },
         ProcRow {
             pid: 2,
+            start_time: 2,
             ppid: None,
             ancestor_chain: Vec::new(),
             user: Arc::from("u"),
@@ -133,12 +138,78 @@ fn refresh_preserves_selected_pid_when_sort_order_changes() {
 }
 
 #[test]
+fn refresh_preserves_selection_and_collapsed_state_when_titles_change() {
+    let mut app = App::with_rows(
+        None,
+        vec![
+            ProcRow {
+                pid: 2,
+                start_time: 2,
+                ppid: Some(1),
+                ancestor_chain: vec![1],
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                cpu_usage_tenths: 10,
+                memory_bytes: 10,
+                name: "service".to_string(),
+                cmd: "/bin/service".to_string(),
+            },
+            ProcRow {
+                pid: 3,
+                start_time: 3,
+                ppid: Some(2),
+                ancestor_chain: vec![2, 1],
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                cpu_usage_tenths: 0,
+                memory_bytes: 0,
+                name: "worker".to_string(),
+                cmd: "/bin/worker".to_string(),
+            },
+        ],
+    );
+    assert!(app.collapse_selected());
+
+    app.refresh(vec![
+        ProcRow {
+            pid: 2,
+            start_time: 2,
+            ppid: Some(1),
+            ancestor_chain: vec![1],
+            user: Arc::from("u"),
+            status: ProcessStatus::Run,
+            cpu_usage_tenths: 200,
+            memory_bytes: 200,
+            name: "service: busy".to_string(),
+            cmd: "/bin/service --busy".to_string(),
+        },
+        ProcRow {
+            pid: 3,
+            start_time: 3,
+            ppid: Some(2),
+            ancestor_chain: vec![2, 1],
+            user: Arc::from("u"),
+            status: ProcessStatus::Run,
+            cpu_usage_tenths: 0,
+            memory_bytes: 0,
+            name: "worker: idle".to_string(),
+            cmd: "/bin/worker --idle".to_string(),
+        },
+    ]);
+
+    assert_eq!(app.table_state.selected(), Some(0));
+    assert!(app.collapsed_pids.contains(&2));
+    assert_eq!(app.expand_selected(), true);
+}
+
+#[test]
 fn refresh_does_not_preserve_selection_for_reused_pid_with_new_identity() {
     let mut app = App::with_rows(
         None,
         vec![
             ProcRow {
                 pid: 1,
+                start_time: 1,
                 ppid: None,
                 ancestor_chain: Vec::new(),
                 user: Arc::from("u"),
@@ -150,6 +221,7 @@ fn refresh_does_not_preserve_selection_for_reused_pid_with_new_identity() {
             },
             ProcRow {
                 pid: 2,
+                start_time: 2,
                 ppid: None,
                 ancestor_chain: Vec::new(),
                 user: Arc::from("u"),
@@ -166,17 +238,19 @@ fn refresh_does_not_preserve_selection_for_reused_pid_with_new_identity() {
     app.refresh(vec![
         ProcRow {
             pid: 2,
+            start_time: 3,
             ppid: None,
             ancestor_chain: Vec::new(),
             user: Arc::from("u"),
             status: ProcessStatus::Run,
             cpu_usage_tenths: 200,
             memory_bytes: 200,
-            name: "replacement".to_string(),
-            cmd: "/bin/replacement".to_string(),
+            name: "old".to_string(),
+            cmd: "/bin/old".to_string(),
         },
         ProcRow {
             pid: 1,
+            start_time: 1,
             ppid: None,
             ancestor_chain: Vec::new(),
             user: Arc::from("u"),
@@ -229,6 +303,7 @@ fn refresh_drops_collapsed_state_for_reused_pid_with_new_identity() {
         vec![
             ProcRow {
                 pid: 2,
+                start_time: 2,
                 ppid: Some(1),
                 ancestor_chain: vec![1],
                 user: Arc::from("u"),
@@ -240,6 +315,7 @@ fn refresh_drops_collapsed_state_for_reused_pid_with_new_identity() {
             },
             ProcRow {
                 pid: 3,
+                start_time: 3,
                 ppid: Some(2),
                 ancestor_chain: vec![2, 1],
                 user: Arc::from("u"),
@@ -257,25 +333,27 @@ fn refresh_drops_collapsed_state_for_reused_pid_with_new_identity() {
     app.refresh(vec![
         ProcRow {
             pid: 2,
+            start_time: 4,
             ppid: Some(1),
             ancestor_chain: vec![1],
             user: Arc::from("u"),
             status: ProcessStatus::Run,
             cpu_usage_tenths: 0,
             memory_bytes: 0,
-            name: "new-parent".to_string(),
-            cmd: "/bin/new-parent".to_string(),
+            name: "old-parent".to_string(),
+            cmd: "/bin/old-parent".to_string(),
         },
         ProcRow {
             pid: 4,
+            start_time: 5,
             ppid: Some(2),
             ancestor_chain: vec![2, 1],
             user: Arc::from("u"),
             status: ProcessStatus::Run,
             cpu_usage_tenths: 0,
             memory_bytes: 0,
-            name: "new-child".to_string(),
-            cmd: "/bin/new-child".to_string(),
+            name: "old-child".to_string(),
+            cmd: "/bin/old-child".to_string(),
         },
     ]);
 
@@ -544,6 +622,7 @@ fn collapse_selected_hides_descendants_and_expand_selected_restores_them() {
         vec![
             ProcRow {
                 pid: 2,
+                start_time: 0,
                 ppid: Some(1),
                 ancestor_chain: vec![1],
                 user: Arc::from("u"),
@@ -555,6 +634,7 @@ fn collapse_selected_hides_descendants_and_expand_selected_restores_them() {
             },
             ProcRow {
                 pid: 3,
+                start_time: 0,
                 ppid: Some(2),
                 ancestor_chain: vec![2, 1],
                 user: Arc::from("u"),
@@ -592,6 +672,7 @@ fn collapse_selected_noops_for_leaf_row() {
 fn begin_signal_confirmation_uses_visible_tree_selection_index() {
     let init = ProcRow {
         pid: 1,
+        start_time: 0,
         ppid: None,
         ancestor_chain: Vec::new(),
         user: Arc::from("u"),
@@ -603,6 +684,7 @@ fn begin_signal_confirmation_uses_visible_tree_selection_index() {
     };
     let service = ProcRow {
         pid: 2,
+        start_time: 0,
         ppid: Some(1),
         ancestor_chain: vec![1],
         user: Arc::from("u"),

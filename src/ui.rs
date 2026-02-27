@@ -158,6 +158,7 @@ mod tests {
     fn sample_row() -> ProcRow {
         ProcRow {
             pid: 7,
+            start_time: 0,
             ppid: None,
             ancestor_chain: Vec::new(),
             user: Arc::from("alice"),
@@ -242,6 +243,7 @@ mod tests {
         let rows = vec![
             ProcRow {
                 pid: 1,
+                start_time: 0,
                 ppid: None,
                 ancestor_chain: Vec::new(),
                 user: Arc::from("u"),
@@ -253,6 +255,7 @@ mod tests {
             },
             ProcRow {
                 pid: 2,
+                start_time: 0,
                 ppid: Some(1),
                 ancestor_chain: vec![1],
                 user: Arc::from("u"),
@@ -264,6 +267,7 @@ mod tests {
             },
             ProcRow {
                 pid: 3,
+                start_time: 0,
                 ppid: Some(2),
                 ancestor_chain: vec![2, 1],
                 user: Arc::from("u"),
@@ -290,6 +294,7 @@ mod tests {
         let rows = vec![
             ProcRow {
                 pid: 1,
+                start_time: 0,
                 ppid: None,
                 ancestor_chain: Vec::new(),
                 user: Arc::from("u"),
@@ -301,6 +306,7 @@ mod tests {
             },
             ProcRow {
                 pid: 2,
+                start_time: 0,
                 ppid: Some(1),
                 ancestor_chain: vec![1],
                 user: Arc::from("u"),
@@ -312,6 +318,7 @@ mod tests {
             },
             ProcRow {
                 pid: 3,
+                start_time: 0,
                 ppid: Some(1),
                 ancestor_chain: vec![1],
                 user: Arc::from("u"),
@@ -323,6 +330,7 @@ mod tests {
             },
             ProcRow {
                 pid: 4,
+                start_time: 0,
                 ppid: Some(2),
                 ancestor_chain: vec![2, 1],
                 user: Arc::from("u"),
@@ -351,6 +359,7 @@ mod tests {
         let rows = vec![
             ProcRow {
                 pid: 1,
+                start_time: 0,
                 ppid: None,
                 ancestor_chain: Vec::new(),
                 user: Arc::from("u"),
@@ -362,6 +371,7 @@ mod tests {
             },
             ProcRow {
                 pid: 30,
+                start_time: 0,
                 ppid: Some(1),
                 ancestor_chain: vec![1],
                 user: Arc::from("u"),
@@ -373,6 +383,7 @@ mod tests {
             },
             ProcRow {
                 pid: 40,
+                start_time: 0,
                 ppid: Some(1),
                 ancestor_chain: vec![1],
                 user: Arc::from("u"),
@@ -384,6 +395,7 @@ mod tests {
             },
             ProcRow {
                 pid: 20,
+                start_time: 0,
                 ppid: Some(1),
                 ancestor_chain: vec![1],
                 user: Arc::from("u"),
@@ -412,6 +424,7 @@ mod tests {
         let rows = vec![
             ProcRow {
                 pid: 1,
+                start_time: 0,
                 ppid: None,
                 ancestor_chain: Vec::new(),
                 user: Arc::from("u"),
@@ -423,6 +436,7 @@ mod tests {
             },
             ProcRow {
                 pid: 3,
+                start_time: 0,
                 ppid: Some(2),
                 ancestor_chain: vec![2, 1],
                 user: Arc::from("u"),
@@ -473,6 +487,7 @@ mod tests {
             vec![
                 ProcRow {
                     pid: 2,
+                    start_time: 0,
                     ppid: Some(1),
                     ancestor_chain: vec![1],
                     user: Arc::from("u"),
@@ -484,6 +499,7 @@ mod tests {
                 },
                 ProcRow {
                     pid: 3,
+                    start_time: 0,
                     ppid: Some(2),
                     ancestor_chain: vec![2, 1],
                     user: Arc::from("u"),

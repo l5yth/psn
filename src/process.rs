@@ -238,6 +238,7 @@ pub fn refresh_rows(
         })
         .map(|process| {
             let pid = process.pid().as_u32() as i32;
+            let start_time = process.start_time();
             let ppid = process.parent().map(|value| value.as_u32() as i32);
             let user = resolve_user_cached(process.user_id(), &mut user_cache);
             let status = process.status();
@@ -248,6 +249,7 @@ pub fn refresh_rows(
 
             ProcRow {
                 pid,
+                start_time,
                 ppid,
                 ancestor_chain: build_ancestor_chain(ppid, &pid_to_ppid_all),
                 user,
@@ -316,6 +318,7 @@ mod tests {
     fn row(pid: i32, name: &str, status: ProcessStatus, cmd: &str) -> ProcRow {
         ProcRow {
             pid,
+            start_time: 0,
             ppid: None,
             ancestor_chain: Vec::new(),
             user: Arc::from("u"),
@@ -473,6 +476,7 @@ mod tests {
         let mut rows = vec![
             ProcRow {
                 pid: 42,
+                start_time: 1,
                 ppid: None,
                 ancestor_chain: Vec::new(),
                 user: std::sync::Arc::from("z"),
@@ -484,6 +488,7 @@ mod tests {
             },
             ProcRow {
                 pid: 50,
+                start_time: 2,
                 ppid: None,
                 ancestor_chain: Vec::new(),
                 user: std::sync::Arc::from("a"),
@@ -495,6 +500,7 @@ mod tests {
             },
             ProcRow {
                 pid: 60,
+                start_time: 3,
                 ppid: None,
                 ancestor_chain: Vec::new(),
                 user: std::sync::Arc::from("a"),
@@ -506,6 +512,7 @@ mod tests {
             },
             ProcRow {
                 pid: 40,
+                start_time: 4,
                 ppid: None,
                 ancestor_chain: Vec::new(),
                 user: std::sync::Arc::from("a"),
@@ -528,6 +535,7 @@ mod tests {
     fn compare_rows_orders_higher_cpu_and_memory_first() {
         let high_cpu = ProcRow {
             pid: 1,
+            start_time: 1,
             ppid: None,
             ancestor_chain: Vec::new(),
             user: Arc::from("u"),
@@ -539,6 +547,7 @@ mod tests {
         };
         let high_mem = ProcRow {
             pid: 2,
+            start_time: 2,
             ppid: None,
             ancestor_chain: Vec::new(),
             user: Arc::from("u"),

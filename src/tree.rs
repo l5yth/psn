@@ -229,6 +229,7 @@ mod tests {
     fn row(pid: i32, ppid: Option<i32>, ancestors: Vec<i32>, name: &str) -> ProcRow {
         ProcRow {
             pid,
+            start_time: 0,
             ppid,
             ancestor_chain: ancestors,
             user: Arc::from("user"),

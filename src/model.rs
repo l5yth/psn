@@ -25,6 +25,8 @@ use sysinfo::ProcessStatus;
 pub struct ProcRow {
     /// Process identifier.
     pub pid: i32,
+    /// Process start time as reported by sysinfo, used to disambiguate pid reuse.
+    pub start_time: u64,
     /// Parent process identifier when available.
     pub ppid: Option<i32>,
     /// Ancestor pid chain from immediate parent upward.
