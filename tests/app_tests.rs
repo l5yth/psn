@@ -69,6 +69,70 @@ fn refresh_reloads_rows_and_clamps_selection() {
 }
 
 #[test]
+fn refresh_preserves_selected_pid_when_sort_order_changes() {
+    let mut app = App::with_rows(
+        None,
+        vec![
+            ProcRow {
+                pid: 1,
+                ppid: None,
+                ancestor_chain: Vec::new(),
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                cpu_usage_tenths: 100,
+                memory_bytes: 100,
+                name: "one".to_string(),
+                cmd: "/bin/one".to_string(),
+            },
+            ProcRow {
+                pid: 2,
+                ppid: None,
+                ancestor_chain: Vec::new(),
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                cpu_usage_tenths: 50,
+                memory_bytes: 50,
+                name: "two".to_string(),
+                cmd: "/bin/two".to_string(),
+            },
+        ],
+    );
+    app.table_state.select(Some(1));
+
+    app.refresh(vec![
+        ProcRow {
+            pid: 1,
+            ppid: None,
+            ancestor_chain: Vec::new(),
+            user: Arc::from("u"),
+            status: ProcessStatus::Run,
+            cpu_usage_tenths: 0,
+            memory_bytes: 0,
+            name: "one".to_string(),
+            cmd: "/bin/one".to_string(),
+        },
+        ProcRow {
+            pid: 2,
+            ppid: None,
+            ancestor_chain: Vec::new(),
+            user: Arc::from("u"),
+            status: ProcessStatus::Run,
+            cpu_usage_tenths: 200,
+            memory_bytes: 200,
+            name: "two".to_string(),
+            cmd: "/bin/two".to_string(),
+        },
+    ]);
+
+    assert_eq!(app.table_state.selected(), Some(0));
+    app.begin_signal_confirmation(1);
+    let pending = app
+        .pending_confirmation
+        .expect("pending confirmation should exist");
+    assert_eq!(pending.pid, 2);
+}
+
+#[test]
 fn refresh_clears_selection_when_no_rows() {
     let mut app = App::with_rows(None, vec![row(1)]);
     app.refresh(vec![]);
@@ -81,6 +145,16 @@ fn refresh_preserving_status_keeps_existing_status_text() {
     app.status = "signal sent".to_string();
     app.refresh_preserving_status(vec![row(2)]);
     assert_eq!(app.status, "signal sent");
+}
+
+#[test]
+fn refresh_falls_back_to_previous_index_when_selected_pid_disappears() {
+    let mut app = App::with_rows(None, vec![row(1), row(2), row(3)]);
+    app.table_state.select(Some(2));
+
+    app.refresh(vec![row(4), row(5)]);
+
+    assert_eq!(app.table_state.selected(), Some(1));
 }
 
 #[test]

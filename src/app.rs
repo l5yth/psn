@@ -92,14 +92,20 @@ impl App {
     /// Update rows and clamp selection to valid bounds.
     fn apply_rows(&mut self, rows: Vec<ProcRow>) {
         let selected_before = self.table_state.selected().unwrap_or(0);
+        let selected_pid = self.selected_row().map(|row| row.pid);
         self.rows = rows;
         let current_pids: HashSet<i32> = self.rows.iter().map(|row| row.pid).collect();
-        self.collapsed_pids
-            .retain(|pid| current_pids.contains(pid));
+        self.collapsed_pids.retain(|pid| current_pids.contains(pid));
 
         let visible_count = self.visible_row_count();
         if visible_count == 0 {
             self.table_state.select(None);
+        } else if let Some(pid) = selected_pid
+            && let Some(index) = display_order_indices(&self.rows, &self.collapsed_pids)
+                .iter()
+                .position(|row_index| self.rows[*row_index].pid == pid)
+        {
+            self.table_state.select(Some(index));
         } else {
             self.table_state
                 .select(Some(min(selected_before, visible_count - 1)));

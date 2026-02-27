@@ -304,9 +304,8 @@ fn resolve_user_cached(uid: Option<&Uid>, cache: &mut HashMap<String, Arc<str>>)
 #[cfg(test)]
 mod tests {
     use super::{
-        FilterSpec, MAX_REGEX_PATTERN_LEN, build_cmd, compare_rows, compile_filter,
-        matches_filter, refresh_rows, resolve_user_cached, sort_rows, status_dot_color,
-        status_priority, to_user,
+        FilterSpec, MAX_REGEX_PATTERN_LEN, build_cmd, compare_rows, compile_filter, matches_filter,
+        refresh_rows, resolve_user_cached, sort_rows, status_dot_color, status_priority, to_user,
     };
     use crate::model::ProcRow;
     use ratatui::style::Color;
