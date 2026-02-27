@@ -22,10 +22,13 @@ use sysinfo::ProcessStatus;
 fn row(pid: i32) -> ProcRow {
     ProcRow {
         pid,
+        start_time: 0,
         ppid: None,
         ancestor_chain: Vec::new(),
         user: Arc::from("u"),
         status: ProcessStatus::Run,
+        cpu_usage_tenths: 0,
+        memory_bytes: 0,
         name: format!("p{pid}"),
         cmd: format!("/bin/p{pid}"),
     }
@@ -67,6 +70,208 @@ fn refresh_reloads_rows_and_clamps_selection() {
 }
 
 #[test]
+fn refresh_preserves_selected_pid_when_sort_order_changes() {
+    let mut app = App::with_rows(
+        None,
+        vec![
+            ProcRow {
+                pid: 1,
+                start_time: 1,
+                ppid: None,
+                ancestor_chain: Vec::new(),
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                cpu_usage_tenths: 100,
+                memory_bytes: 100,
+                name: "one".to_string(),
+                cmd: "/bin/one".to_string(),
+            },
+            ProcRow {
+                pid: 2,
+                start_time: 2,
+                ppid: None,
+                ancestor_chain: Vec::new(),
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                cpu_usage_tenths: 50,
+                memory_bytes: 50,
+                name: "two".to_string(),
+                cmd: "/bin/two".to_string(),
+            },
+        ],
+    );
+    app.table_state.select(Some(1));
+
+    app.refresh(vec![
+        ProcRow {
+            pid: 1,
+            start_time: 1,
+            ppid: None,
+            ancestor_chain: Vec::new(),
+            user: Arc::from("u"),
+            status: ProcessStatus::Run,
+            cpu_usage_tenths: 0,
+            memory_bytes: 0,
+            name: "one".to_string(),
+            cmd: "/bin/one".to_string(),
+        },
+        ProcRow {
+            pid: 2,
+            start_time: 2,
+            ppid: None,
+            ancestor_chain: Vec::new(),
+            user: Arc::from("u"),
+            status: ProcessStatus::Run,
+            cpu_usage_tenths: 200,
+            memory_bytes: 200,
+            name: "two".to_string(),
+            cmd: "/bin/two".to_string(),
+        },
+    ]);
+
+    assert_eq!(app.table_state.selected(), Some(0));
+    app.begin_signal_confirmation(1);
+    let pending = app
+        .pending_confirmation
+        .expect("pending confirmation should exist");
+    assert_eq!(pending.pid, 2);
+}
+
+#[test]
+fn refresh_preserves_selection_and_collapsed_state_when_titles_change() {
+    let mut app = App::with_rows(
+        None,
+        vec![
+            ProcRow {
+                pid: 2,
+                start_time: 2,
+                ppid: Some(1),
+                ancestor_chain: vec![1],
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                cpu_usage_tenths: 10,
+                memory_bytes: 10,
+                name: "service".to_string(),
+                cmd: "/bin/service".to_string(),
+            },
+            ProcRow {
+                pid: 3,
+                start_time: 3,
+                ppid: Some(2),
+                ancestor_chain: vec![2, 1],
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                cpu_usage_tenths: 0,
+                memory_bytes: 0,
+                name: "worker".to_string(),
+                cmd: "/bin/worker".to_string(),
+            },
+        ],
+    );
+    assert!(app.collapse_selected());
+
+    app.refresh(vec![
+        ProcRow {
+            pid: 2,
+            start_time: 2,
+            ppid: Some(1),
+            ancestor_chain: vec![1],
+            user: Arc::from("u"),
+            status: ProcessStatus::Run,
+            cpu_usage_tenths: 200,
+            memory_bytes: 200,
+            name: "service: busy".to_string(),
+            cmd: "/bin/service --busy".to_string(),
+        },
+        ProcRow {
+            pid: 3,
+            start_time: 3,
+            ppid: Some(2),
+            ancestor_chain: vec![2, 1],
+            user: Arc::from("u"),
+            status: ProcessStatus::Run,
+            cpu_usage_tenths: 0,
+            memory_bytes: 0,
+            name: "worker: idle".to_string(),
+            cmd: "/bin/worker --idle".to_string(),
+        },
+    ]);
+
+    assert_eq!(app.table_state.selected(), Some(0));
+    assert!(app.collapsed_pids.contains(&2));
+    assert!(app.expand_selected());
+}
+
+#[test]
+fn refresh_does_not_preserve_selection_for_reused_pid_with_new_identity() {
+    let mut app = App::with_rows(
+        None,
+        vec![
+            ProcRow {
+                pid: 1,
+                start_time: 1,
+                ppid: None,
+                ancestor_chain: Vec::new(),
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                cpu_usage_tenths: 100,
+                memory_bytes: 100,
+                name: "stable".to_string(),
+                cmd: "/bin/stable".to_string(),
+            },
+            ProcRow {
+                pid: 2,
+                start_time: 2,
+                ppid: None,
+                ancestor_chain: Vec::new(),
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                cpu_usage_tenths: 50,
+                memory_bytes: 50,
+                name: "old".to_string(),
+                cmd: "/bin/old".to_string(),
+            },
+        ],
+    );
+    app.table_state.select(Some(1));
+
+    app.refresh(vec![
+        ProcRow {
+            pid: 2,
+            start_time: 3,
+            ppid: None,
+            ancestor_chain: Vec::new(),
+            user: Arc::from("u"),
+            status: ProcessStatus::Run,
+            cpu_usage_tenths: 200,
+            memory_bytes: 200,
+            name: "old".to_string(),
+            cmd: "/bin/old".to_string(),
+        },
+        ProcRow {
+            pid: 1,
+            start_time: 1,
+            ppid: None,
+            ancestor_chain: Vec::new(),
+            user: Arc::from("u"),
+            status: ProcessStatus::Run,
+            cpu_usage_tenths: 0,
+            memory_bytes: 0,
+            name: "stable".to_string(),
+            cmd: "/bin/stable".to_string(),
+        },
+    ]);
+
+    assert_eq!(app.table_state.selected(), Some(1));
+    app.begin_signal_confirmation(1);
+    let pending = app
+        .pending_confirmation
+        .expect("pending confirmation should exist");
+    assert_eq!(pending.pid, 1);
+    assert_eq!(pending.process_name, "stable");
+}
+
+#[test]
 fn refresh_clears_selection_when_no_rows() {
     let mut app = App::with_rows(None, vec![row(1)]);
     app.refresh(vec![]);
@@ -79,6 +284,83 @@ fn refresh_preserving_status_keeps_existing_status_text() {
     app.status = "signal sent".to_string();
     app.refresh_preserving_status(vec![row(2)]);
     assert_eq!(app.status, "signal sent");
+}
+
+#[test]
+fn refresh_falls_back_to_previous_index_when_selected_pid_disappears() {
+    let mut app = App::with_rows(None, vec![row(1), row(2), row(3)]);
+    app.table_state.select(Some(2));
+
+    app.refresh(vec![row(4), row(5)]);
+
+    assert_eq!(app.table_state.selected(), Some(1));
+}
+
+#[test]
+fn refresh_drops_collapsed_state_for_reused_pid_with_new_identity() {
+    let mut app = App::with_rows(
+        None,
+        vec![
+            ProcRow {
+                pid: 2,
+                start_time: 2,
+                ppid: Some(1),
+                ancestor_chain: vec![1],
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                cpu_usage_tenths: 0,
+                memory_bytes: 0,
+                name: "old-parent".to_string(),
+                cmd: "/bin/old-parent".to_string(),
+            },
+            ProcRow {
+                pid: 3,
+                start_time: 3,
+                ppid: Some(2),
+                ancestor_chain: vec![2, 1],
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                cpu_usage_tenths: 0,
+                memory_bytes: 0,
+                name: "old-child".to_string(),
+                cmd: "/bin/old-child".to_string(),
+            },
+        ],
+    );
+    assert!(app.collapse_selected());
+    assert!(app.collapsed_pids.contains(&2));
+
+    app.refresh(vec![
+        ProcRow {
+            pid: 2,
+            start_time: 4,
+            ppid: Some(1),
+            ancestor_chain: vec![1],
+            user: Arc::from("u"),
+            status: ProcessStatus::Run,
+            cpu_usage_tenths: 0,
+            memory_bytes: 0,
+            name: "old-parent".to_string(),
+            cmd: "/bin/old-parent".to_string(),
+        },
+        ProcRow {
+            pid: 4,
+            start_time: 5,
+            ppid: Some(2),
+            ancestor_chain: vec![2, 1],
+            user: Arc::from("u"),
+            status: ProcessStatus::Run,
+            cpu_usage_tenths: 0,
+            memory_bytes: 0,
+            name: "old-child".to_string(),
+            cmd: "/bin/old-child".to_string(),
+        },
+    ]);
+
+    assert!(app.collapsed_pids.is_empty());
+
+    app.page_down(1);
+    assert_eq!(app.table_state.selected(), Some(1));
 }
 
 #[test]
@@ -201,6 +483,39 @@ fn pending_target_matches_current_rows_false_when_target_changed() {
     let mut app = App::with_rows(None, vec![row(100)]);
     app.begin_signal_confirmation(1);
     app.rows = vec![row(101)];
+    assert!(!app.pending_target_matches_current_rows());
+}
+
+#[test]
+fn pending_target_matches_current_rows_false_for_reused_pid_with_same_name() {
+    let mut app = App::with_rows(
+        None,
+        vec![ProcRow {
+            pid: 100,
+            start_time: 1,
+            ppid: None,
+            ancestor_chain: Vec::new(),
+            user: Arc::from("u"),
+            status: ProcessStatus::Run,
+            cpu_usage_tenths: 0,
+            memory_bytes: 0,
+            name: "worker".to_string(),
+            cmd: "/bin/worker".to_string(),
+        }],
+    );
+    app.begin_signal_confirmation(1);
+    app.rows = vec![ProcRow {
+        pid: 100,
+        start_time: 2,
+        ppid: None,
+        ancestor_chain: Vec::new(),
+        user: Arc::from("u"),
+        status: ProcessStatus::Run,
+        cpu_usage_tenths: 0,
+        memory_bytes: 0,
+        name: "worker".to_string(),
+        cmd: "/bin/worker".to_string(),
+    }];
     assert!(!app.pending_target_matches_current_rows());
 }
 
@@ -334,29 +649,88 @@ fn page_down_clears_invalid_selection_when_rows_are_empty() {
 }
 
 #[test]
+fn collapse_selected_hides_descendants_and_expand_selected_restores_them() {
+    let mut app = App::with_rows(
+        None,
+        vec![
+            ProcRow {
+                pid: 2,
+                start_time: 0,
+                ppid: Some(1),
+                ancestor_chain: vec![1],
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                cpu_usage_tenths: 0,
+                memory_bytes: 0,
+                name: "service".to_string(),
+                cmd: "/bin/service".to_string(),
+            },
+            ProcRow {
+                pid: 3,
+                start_time: 0,
+                ppid: Some(2),
+                ancestor_chain: vec![2, 1],
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                cpu_usage_tenths: 0,
+                memory_bytes: 0,
+                name: "worker".to_string(),
+                cmd: "/bin/worker".to_string(),
+            },
+        ],
+    );
+
+    assert!(app.collapse_selected());
+    assert!(app.collapsed_pids.contains(&2));
+
+    app.page_down(1);
+    assert_eq!(app.table_state.selected(), Some(0));
+
+    assert!(app.expand_selected());
+    assert!(!app.collapsed_pids.contains(&2));
+
+    app.page_down(1);
+    assert_eq!(app.table_state.selected(), Some(1));
+}
+
+#[test]
+fn collapse_selected_noops_for_leaf_row() {
+    let mut app = App::with_rows(None, vec![row(1)]);
+
+    assert!(!app.collapse_selected());
+    assert!(app.collapsed_pids.is_empty());
+}
+
+#[test]
 fn begin_signal_confirmation_uses_visible_tree_selection_index() {
-    let parent = ProcRow {
+    let init = ProcRow {
         pid: 1,
+        start_time: 0,
         ppid: None,
         ancestor_chain: Vec::new(),
         user: Arc::from("u"),
         status: ProcessStatus::Sleep,
-        name: "parent".to_string(),
-        cmd: "/bin/parent".to_string(),
+        cpu_usage_tenths: 0,
+        memory_bytes: 0,
+        name: "init".to_string(),
+        cmd: "/bin/init".to_string(),
     };
-    let child = ProcRow {
+    let service = ProcRow {
         pid: 2,
+        start_time: 0,
         ppid: Some(1),
         ancestor_chain: vec![1],
         user: Arc::from("u"),
         status: ProcessStatus::Run,
-        name: "child".to_string(),
-        cmd: "/bin/child".to_string(),
+        cpu_usage_tenths: 0,
+        memory_bytes: 0,
+        name: "service".to_string(),
+        cmd: "/bin/service".to_string(),
     };
 
-    // Backing order differs from visual tree order (child first by status).
-    let mut app = App::with_rows(None, vec![child, parent]);
-    // Visual row 0 points to parent in tree mode.
+    // Backing order differs from visual tree order because pid 1 children are
+    // rendered as roots and roots are sorted by status first.
+    let mut app = App::with_rows(None, vec![init, service]);
     app.table_state.select(Some(0));
 
     app.begin_signal_confirmation(1);
@@ -364,6 +738,6 @@ fn begin_signal_confirmation_uses_visible_tree_selection_index() {
     let pending = app
         .pending_confirmation
         .expect("pending confirmation should exist");
-    assert_eq!(pending.pid, 1);
-    assert_eq!(pending.process_name, "parent");
+    assert_eq!(pending.pid, 2);
+    assert_eq!(pending.process_name, "service");
 }

@@ -25,6 +25,8 @@ use sysinfo::ProcessStatus;
 pub struct ProcRow {
     /// Process identifier.
     pub pid: i32,
+    /// Process start time as reported by sysinfo, used to disambiguate pid reuse.
+    pub start_time: u64,
     /// Parent process identifier when available.
     pub ppid: Option<i32>,
     /// Ancestor pid chain from immediate parent upward.
@@ -33,6 +35,10 @@ pub struct ProcRow {
     pub user: Arc<str>,
     /// Process status from sysinfo.
     pub status: ProcessStatus,
+    /// CPU usage in tenths of a percent, used for hidden sort ordering.
+    pub cpu_usage_tenths: u32,
+    /// Resident memory usage in bytes, used for hidden sort ordering.
+    pub memory_bytes: u64,
     /// Short process name.
     pub name: String,
     /// Full command line, when available.

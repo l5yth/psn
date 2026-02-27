@@ -17,6 +17,7 @@
 //! Process collection, mapping, filtering, and ordering.
 
 use std::{
+    cmp::Ordering,
     collections::{HashMap, HashSet},
     ffi::OsString,
     path::Path,
@@ -181,22 +182,26 @@ pub fn status_dot_color(status: ProcessStatus) -> Color {
     }
 }
 
-/// Sort rows by status priority, pid, name, user, then command.
+/// Compare rows by activity, resource usage, and stable identity keys.
+pub fn compare_rows(a: &ProcRow, b: &ProcRow) -> Ordering {
+    status_priority(a.status)
+        .cmp(&status_priority(b.status))
+        .then(b.cpu_usage_tenths.cmp(&a.cpu_usage_tenths))
+        .then(b.memory_bytes.cmp(&a.memory_bytes))
+        .then(a.name.cmp(&b.name))
+        .then(a.user.as_ref().cmp(b.user.as_ref()))
+        .then(a.pid.cmp(&b.pid))
+}
+
+/// Sort rows by status priority, cpu usage, memory usage, name, user, then pid.
 pub fn sort_rows(rows: &mut [ProcRow]) {
-    rows.sort_by(|a, b| {
-        status_priority(a.status)
-            .cmp(&status_priority(b.status))
-            .then(a.pid.cmp(&b.pid))
-            .then(a.name.cmp(&b.name))
-            .then(a.user.as_ref().cmp(b.user.as_ref()))
-            .then(a.cmd.cmp(&b.cmd))
-    });
+    rows.sort_by(compare_rows);
 }
 
 /// Refresh process rows from sysinfo and apply optional filtering.
 ///
 /// This intentionally refreshes only process data required by the current table
-/// columns (pid, user, status, name, command).
+/// columns plus hidden sort keys (pid, name, command, status, user, cpu, memory).
 pub fn refresh_rows(
     sys: &mut System,
     filter: Option<&FilterSpec>,
@@ -233,18 +238,24 @@ pub fn refresh_rows(
         })
         .map(|process| {
             let pid = process.pid().as_u32() as i32;
+            let start_time = process.start_time();
             let ppid = process.parent().map(|value| value.as_u32() as i32);
             let user = resolve_user_cached(process.user_id(), &mut user_cache);
             let status = process.status();
+            let cpu_usage_tenths = (process.cpu_usage().max(0.0) * 10.0).round() as u32;
+            let memory_bytes = process.memory();
             let name = process.name().to_string_lossy().to_string();
             let cmd = build_cmd(process.cmd(), process.exe());
 
             ProcRow {
                 pid,
+                start_time,
                 ppid,
                 ancestor_chain: build_ancestor_chain(ppid, &pid_to_ppid_all),
                 user,
                 status,
+                cpu_usage_tenths,
+                memory_bytes,
                 name,
                 cmd,
             }
@@ -295,22 +306,25 @@ fn resolve_user_cached(uid: Option<&Uid>, cache: &mut HashMap<String, Arc<str>>)
 #[cfg(test)]
 mod tests {
     use super::{
-        FilterSpec, MAX_REGEX_PATTERN_LEN, build_cmd, compile_filter, matches_filter, refresh_rows,
-        resolve_user_cached, sort_rows, status_dot_color, status_priority, to_user,
+        FilterSpec, MAX_REGEX_PATTERN_LEN, build_cmd, compare_rows, compile_filter, matches_filter,
+        refresh_rows, resolve_user_cached, sort_rows, status_dot_color, status_priority, to_user,
     };
     use crate::model::ProcRow;
     use ratatui::style::Color;
-    use std::{collections::HashMap, sync::Arc};
+    use std::{cmp::Ordering, collections::HashMap, sync::Arc};
     use std::{ffi::OsString, path::Path};
     use sysinfo::{ProcessStatus, System, Uid};
 
     fn row(pid: i32, name: &str, status: ProcessStatus, cmd: &str) -> ProcRow {
         ProcRow {
             pid,
+            start_time: 0,
             ppid: None,
             ancestor_chain: Vec::new(),
             user: Arc::from("u"),
             status,
+            cpu_usage_tenths: 0,
+            memory_bytes: 0,
             name: name.to_string(),
             cmd: cmd.to_string(),
         }
@@ -441,7 +455,7 @@ mod tests {
     }
 
     #[test]
-    fn sort_rows_uses_status_then_pid_then_name_user_cmd() {
+    fn sort_rows_uses_status_then_name_then_pid_when_resource_keys_match() {
         let mut rows = vec![
             row(30, "bbb", ProcessStatus::Sleep, "c1"),
             row(22, "aaa", ProcessStatus::Run, "c2"),
@@ -458,42 +472,94 @@ mod tests {
     }
 
     #[test]
-    fn sort_rows_uses_all_tie_breakers_in_order() {
+    fn sort_rows_uses_cpu_memory_name_user_then_pid_tie_breakers() {
         let mut rows = vec![
             ProcRow {
                 pid: 42,
+                start_time: 1,
                 ppid: None,
                 ancestor_chain: Vec::new(),
                 user: std::sync::Arc::from("z"),
                 status: ProcessStatus::Run,
+                cpu_usage_tenths: 25,
+                memory_bytes: 200,
                 name: "bbb".to_string(),
                 cmd: "z".to_string(),
             },
             ProcRow {
-                pid: 42,
+                pid: 50,
+                start_time: 2,
                 ppid: None,
                 ancestor_chain: Vec::new(),
                 user: std::sync::Arc::from("a"),
                 status: ProcessStatus::Run,
+                cpu_usage_tenths: 25,
+                memory_bytes: 200,
                 name: "bbb".to_string(),
                 cmd: "x".to_string(),
             },
             ProcRow {
-                pid: 42,
+                pid: 60,
+                start_time: 3,
                 ppid: None,
                 ancestor_chain: Vec::new(),
                 user: std::sync::Arc::from("a"),
                 status: ProcessStatus::Run,
-                name: "aaa".to_string(),
+                cpu_usage_tenths: 30,
+                memory_bytes: 100,
+                name: "ccc".to_string(),
                 cmd: "y".to_string(),
+            },
+            ProcRow {
+                pid: 40,
+                start_time: 4,
+                ppid: None,
+                ancestor_chain: Vec::new(),
+                user: std::sync::Arc::from("a"),
+                status: ProcessStatus::Run,
+                cpu_usage_tenths: 25,
+                memory_bytes: 300,
+                name: "ccc".to_string(),
+                cmd: "w".to_string(),
             },
         ];
 
         sort_rows(&mut rows);
-        assert_eq!(rows[0].name, "aaa");
-        assert_eq!(&*rows[1].user, "a");
-        assert_eq!(rows[1].cmd, "x");
-        assert_eq!(rows[2].cmd, "z");
+        assert_eq!(rows[0].pid, 60);
+        assert_eq!(rows[1].pid, 40);
+        assert_eq!(rows[2].pid, 50);
+        assert_eq!(rows[3].pid, 42);
+    }
+
+    #[test]
+    fn compare_rows_orders_higher_cpu_and_memory_first() {
+        let high_cpu = ProcRow {
+            pid: 1,
+            start_time: 1,
+            ppid: None,
+            ancestor_chain: Vec::new(),
+            user: Arc::from("u"),
+            status: ProcessStatus::Run,
+            cpu_usage_tenths: 90,
+            memory_bytes: 10,
+            name: "a".to_string(),
+            cmd: "a".to_string(),
+        };
+        let high_mem = ProcRow {
+            pid: 2,
+            start_time: 2,
+            ppid: None,
+            ancestor_chain: Vec::new(),
+            user: Arc::from("u"),
+            status: ProcessStatus::Run,
+            cpu_usage_tenths: 80,
+            memory_bytes: 999,
+            name: "b".to_string(),
+            cmd: "b".to_string(),
+        };
+
+        assert_eq!(compare_rows(&high_cpu, &high_mem), Ordering::Less);
+        assert_eq!(compare_rows(&high_mem, &high_cpu), Ordering::Greater);
     }
 
     #[test]
