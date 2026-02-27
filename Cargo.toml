@@ -13,6 +13,10 @@ homepage = "https://github.com/l5yth/psn"
 keywords = ["process", "top", "tui", "linux"]
 categories = ["command-line-utilities"]
 
+[features]
+default = []
+debug_tui = []
+
 [dependencies]
 anyhow = "1"
 crossterm = "0.29"

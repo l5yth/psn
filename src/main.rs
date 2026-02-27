@@ -19,13 +19,20 @@ use psn::cli::{CliCommand, help_text, parse_args, version_text};
 
 /// Binary entry point. Delegates to CLI parsing and runtime.
 fn main() -> Result<()> {
-    dispatch_command(parse_args(std::env::args())?, &mut psn::run)
+    dispatch_command(
+        parse_args(std::env::args())?,
+        &mut psn::run,
+        #[cfg(all(feature = "debug_tui", debug_assertions))]
+        &mut psn::run_debug_tui,
+    )
 }
 
 /// Execute a parsed CLI command with an injected runtime runner.
 fn dispatch_command(
     command: CliCommand,
     runner: &mut dyn FnMut(Option<String>, bool, bool) -> Result<()>,
+    #[cfg(all(feature = "debug_tui", debug_assertions))] debug_runner: &mut dyn FnMut()
+        -> Result<()>,
 ) -> Result<()> {
     match command {
         CliCommand::Help => {
@@ -41,6 +48,8 @@ fn dispatch_command(
             regex_mode,
             user_only,
         } => runner(filter, regex_mode, user_only),
+        #[cfg(all(feature = "debug_tui", debug_assertions))]
+        CliCommand::DebugTui => debug_runner(),
     }
 }
 
@@ -54,16 +63,37 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(all(feature = "debug_tui", debug_assertions))]
+    fn no_op_debug_runner() -> Result<()> {
+        Ok(())
+    }
+
     #[test]
     fn dispatch_command_help_returns_ok() {
         let mut runner = no_op_runner;
-        assert!(dispatch_command(CliCommand::Help, &mut runner).is_ok());
+        assert!(
+            dispatch_command(
+                CliCommand::Help,
+                &mut runner,
+                #[cfg(all(feature = "debug_tui", debug_assertions))]
+                &mut no_op_debug_runner,
+            )
+            .is_ok()
+        );
     }
 
     #[test]
     fn dispatch_command_version_returns_ok() {
         let mut runner = no_op_runner;
-        assert!(dispatch_command(CliCommand::Version, &mut runner).is_ok());
+        assert!(
+            dispatch_command(
+                CliCommand::Version,
+                &mut runner,
+                #[cfg(all(feature = "debug_tui", debug_assertions))]
+                &mut no_op_debug_runner,
+            )
+            .is_ok()
+        );
     }
 
     #[test]
@@ -84,7 +114,15 @@ mod tests {
             user_only: true,
         };
 
-        assert!(dispatch_command(command, &mut runner).is_ok());
+        assert!(
+            dispatch_command(
+                command,
+                &mut runner,
+                #[cfg(all(feature = "debug_tui", debug_assertions))]
+                &mut no_op_debug_runner,
+            )
+            .is_ok()
+        );
         assert!(called);
     }
 
@@ -96,6 +134,33 @@ mod tests {
             regex_mode: false,
             user_only: false,
         };
-        assert!(dispatch_command(command, &mut runner).is_ok());
+        assert!(
+            dispatch_command(
+                command,
+                &mut runner,
+                #[cfg(all(feature = "debug_tui", debug_assertions))]
+                &mut no_op_debug_runner,
+            )
+            .is_ok()
+        );
+    }
+
+    #[cfg(all(feature = "debug_tui", debug_assertions))]
+    #[test]
+    fn dispatch_command_debug_tui_calls_debug_runner() {
+        let mut runner_called = false;
+        let mut debug_called = false;
+        let mut runner = |_: Option<String>, _: bool, _: bool| -> Result<()> {
+            runner_called = true;
+            Ok(())
+        };
+        let mut debug_runner = || -> Result<()> {
+            debug_called = true;
+            Ok(())
+        };
+
+        assert!(dispatch_command(CliCommand::DebugTui, &mut runner, &mut debug_runner).is_ok());
+        assert!(!runner_called);
+        assert!(debug_called);
     }
 }

@@ -16,19 +16,15 @@
 
 //! Input mapping and runtime action application for the TUI loop.
 
-use std::{io, time::Duration};
+use std::time::Duration;
 
 use anyhow::Result;
+use crossterm::event;
 use crossterm::event::{Event, KeyCode, KeyEventKind};
-use crossterm::{
-    event, execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
-};
 use nix::sys::signal::Signal;
-use ratatui::{Terminal, prelude::CrosstermBackend};
 use sysinfo::System;
 
-use crate::{app::App, model::ProcRow, process, signal, ui};
+use crate::{app::App, model::ProcRow, process, signal, terminal::TerminalSession, ui};
 
 /// Number of rows moved by page navigation actions.
 pub const PAGE_STEP: usize = 10;
@@ -251,11 +247,13 @@ pub fn run_interactive(
     compiled_filter: Option<process::FilterSpec>,
     user_only: bool,
 ) -> Result<()> {
-    let mut terminal = setup_terminal()?;
+    let mut terminal = TerminalSession::start()?;
     let mut sys = System::new_all();
 
     let mut draw = |app: &mut App| -> Result<()> {
-        terminal.draw(|frame| ui::render(frame, app))?;
+        terminal
+            .terminal_mut()
+            .draw(|frame| ui::render(frame, app))?;
         Ok(())
     };
     let mut next_event = |timeout| -> Result<Option<Event>> {
@@ -274,8 +272,6 @@ pub fn run_interactive(
         &mut refresh_rows,
         &mut sender,
     );
-
-    restore_terminal(terminal);
     run_result
 }
 
@@ -289,21 +285,6 @@ fn run_with_runtime(
     let initial_rows = refresh_rows();
     let mut app = App::with_rows(filter, initial_rows);
     run_event_loop(&mut app, draw, next_event, refresh_rows, sender)
-}
-
-/// Configure terminal raw mode and alternate screen for TUI rendering.
-fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
-    Ok(Terminal::new(CrosstermBackend::new(stdout))?)
-}
-
-/// Restore terminal state after TUI execution, ignoring restoration failures.
-fn restore_terminal(mut terminal: Terminal<CrosstermBackend<io::Stdout>>) {
-    let _ = disable_raw_mode();
-    let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
-    let _ = terminal.show_cursor();
 }
 
 /// Refresh rows while keeping selection bounded to the previous index.

@@ -27,6 +27,10 @@ pub enum CliCommand {
         regex_mode: bool,
         user_only: bool,
     },
+    /// Run the hidden synthetic-data TUI used during local development.
+    #[cfg(all(feature = "debug_tui", debug_assertions))]
+    #[doc(hidden)]
+    DebugTui,
     /// Print usage instructions and exit.
     Help,
     /// Print version text and exit.
@@ -42,6 +46,11 @@ where
     let mut args: Vec<String> = args.into_iter().map(Into::into).collect();
     if !args.is_empty() {
         args.remove(0);
+    }
+
+    #[cfg(all(feature = "debug_tui", debug_assertions))]
+    if args.iter().any(|arg| arg == "--debug-tui") {
+        return Ok(CliCommand::DebugTui);
     }
 
     let mut positionals: Vec<String> = Vec::new();
@@ -462,6 +471,7 @@ mod tests {
         assert!(text.contains("--filter"));
         assert!(text.contains("--regex"));
         assert!(text.contains("--user"));
+        assert!(!text.contains("--debug-tui"));
     }
 
     #[test]
@@ -470,5 +480,25 @@ mod tests {
         assert!(text.contains("psn v"));
         assert!(text.contains("process status navigator"));
         assert!(text.contains("apache v2 (c) 2026 l5yth"));
+    }
+
+    #[cfg(all(feature = "debug_tui", debug_assertions))]
+    #[test]
+    fn parse_args_debug_tui_ignores_all_other_flags() {
+        assert_eq!(
+            parse_args(["psn", "--debug-tui", "--help", "-f", "ssh"])
+                .expect("parse should succeed"),
+            CliCommand::DebugTui
+        );
+        assert_eq!(
+            parse_args(["psn", "-u", "--debug-tui", "--wat"]).expect("parse should succeed"),
+            CliCommand::DebugTui
+        );
+    }
+
+    #[cfg(not(all(feature = "debug_tui", debug_assertions)))]
+    #[test]
+    fn parse_args_debug_tui_is_rejected_when_hidden_feature_is_disabled() {
+        assert!(parse_args(["psn", "--debug-tui"]).is_err());
     }
 }
