@@ -27,6 +27,13 @@ use crate::{
     tree::{display_order_indices, display_rows},
 };
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct ProcessIdentity {
+    pid: i32,
+    name: String,
+    cmd: String,
+}
+
 /// Mutable application state shared between input handling and rendering.
 #[derive(Debug)]
 pub struct App {
@@ -92,18 +99,28 @@ impl App {
     /// Update rows and clamp selection to valid bounds.
     fn apply_rows(&mut self, rows: Vec<ProcRow>) {
         let selected_before = self.table_state.selected().unwrap_or(0);
-        let selected_pid = self.selected_row().map(|row| row.pid);
+        let selected_identity = self.selected_row().map(ProcessIdentity::from_row);
+        let collapsed_identities: HashSet<ProcessIdentity> = self
+            .rows
+            .iter()
+            .filter(|row| self.collapsed_pids.contains(&row.pid))
+            .map(ProcessIdentity::from_row)
+            .collect();
         self.rows = rows;
-        let current_pids: HashSet<i32> = self.rows.iter().map(|row| row.pid).collect();
-        self.collapsed_pids.retain(|pid| current_pids.contains(pid));
+        self.collapsed_pids = self
+            .rows
+            .iter()
+            .filter(|row| collapsed_identities.contains(&ProcessIdentity::from_row(row)))
+            .map(|row| row.pid)
+            .collect();
 
         let visible_count = self.visible_row_count();
         if visible_count == 0 {
             self.table_state.select(None);
-        } else if let Some(pid) = selected_pid
+        } else if let Some(identity) = selected_identity
             && let Some(index) = display_order_indices(&self.rows, &self.collapsed_pids)
                 .iter()
-                .position(|row_index| self.rows[*row_index].pid == pid)
+                .position(|row_index| ProcessIdentity::from_row(&self.rows[*row_index]) == identity)
         {
             self.table_state.select(Some(index));
         } else {
@@ -315,5 +332,15 @@ impl App {
 
     fn visible_row_count(&self) -> usize {
         display_order_indices(&self.rows, &self.collapsed_pids).len()
+    }
+}
+
+impl ProcessIdentity {
+    fn from_row(row: &ProcRow) -> Self {
+        Self {
+            pid: row.pid,
+            name: row.name.clone(),
+            cmd: row.cmd.clone(),
+        }
     }
 }

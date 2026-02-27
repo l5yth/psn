@@ -133,6 +133,71 @@ fn refresh_preserves_selected_pid_when_sort_order_changes() {
 }
 
 #[test]
+fn refresh_does_not_preserve_selection_for_reused_pid_with_new_identity() {
+    let mut app = App::with_rows(
+        None,
+        vec![
+            ProcRow {
+                pid: 1,
+                ppid: None,
+                ancestor_chain: Vec::new(),
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                cpu_usage_tenths: 100,
+                memory_bytes: 100,
+                name: "stable".to_string(),
+                cmd: "/bin/stable".to_string(),
+            },
+            ProcRow {
+                pid: 2,
+                ppid: None,
+                ancestor_chain: Vec::new(),
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                cpu_usage_tenths: 50,
+                memory_bytes: 50,
+                name: "old".to_string(),
+                cmd: "/bin/old".to_string(),
+            },
+        ],
+    );
+    app.table_state.select(Some(1));
+
+    app.refresh(vec![
+        ProcRow {
+            pid: 2,
+            ppid: None,
+            ancestor_chain: Vec::new(),
+            user: Arc::from("u"),
+            status: ProcessStatus::Run,
+            cpu_usage_tenths: 200,
+            memory_bytes: 200,
+            name: "replacement".to_string(),
+            cmd: "/bin/replacement".to_string(),
+        },
+        ProcRow {
+            pid: 1,
+            ppid: None,
+            ancestor_chain: Vec::new(),
+            user: Arc::from("u"),
+            status: ProcessStatus::Run,
+            cpu_usage_tenths: 0,
+            memory_bytes: 0,
+            name: "stable".to_string(),
+            cmd: "/bin/stable".to_string(),
+        },
+    ]);
+
+    assert_eq!(app.table_state.selected(), Some(1));
+    app.begin_signal_confirmation(1);
+    let pending = app
+        .pending_confirmation
+        .expect("pending confirmation should exist");
+    assert_eq!(pending.pid, 1);
+    assert_eq!(pending.process_name, "stable");
+}
+
+#[test]
 fn refresh_clears_selection_when_no_rows() {
     let mut app = App::with_rows(None, vec![row(1)]);
     app.refresh(vec![]);
@@ -154,6 +219,69 @@ fn refresh_falls_back_to_previous_index_when_selected_pid_disappears() {
 
     app.refresh(vec![row(4), row(5)]);
 
+    assert_eq!(app.table_state.selected(), Some(1));
+}
+
+#[test]
+fn refresh_drops_collapsed_state_for_reused_pid_with_new_identity() {
+    let mut app = App::with_rows(
+        None,
+        vec![
+            ProcRow {
+                pid: 2,
+                ppid: Some(1),
+                ancestor_chain: vec![1],
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                cpu_usage_tenths: 0,
+                memory_bytes: 0,
+                name: "old-parent".to_string(),
+                cmd: "/bin/old-parent".to_string(),
+            },
+            ProcRow {
+                pid: 3,
+                ppid: Some(2),
+                ancestor_chain: vec![2, 1],
+                user: Arc::from("u"),
+                status: ProcessStatus::Run,
+                cpu_usage_tenths: 0,
+                memory_bytes: 0,
+                name: "old-child".to_string(),
+                cmd: "/bin/old-child".to_string(),
+            },
+        ],
+    );
+    assert!(app.collapse_selected());
+    assert!(app.collapsed_pids.contains(&2));
+
+    app.refresh(vec![
+        ProcRow {
+            pid: 2,
+            ppid: Some(1),
+            ancestor_chain: vec![1],
+            user: Arc::from("u"),
+            status: ProcessStatus::Run,
+            cpu_usage_tenths: 0,
+            memory_bytes: 0,
+            name: "new-parent".to_string(),
+            cmd: "/bin/new-parent".to_string(),
+        },
+        ProcRow {
+            pid: 4,
+            ppid: Some(2),
+            ancestor_chain: vec![2, 1],
+            user: Arc::from("u"),
+            status: ProcessStatus::Run,
+            cpu_usage_tenths: 0,
+            memory_bytes: 0,
+            name: "new-child".to_string(),
+            cmd: "/bin/new-child".to_string(),
+        },
+    ]);
+
+    assert!(app.collapsed_pids.is_empty());
+
+    app.page_down(1);
     assert_eq!(app.table_state.selected(), Some(1));
 }
 
