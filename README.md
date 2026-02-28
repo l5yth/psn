@@ -12,7 +12,7 @@
 
 `psn` is a Rust terminal UI for viewing process status and sending signals.
 
-![psn TUI overview](assets/images/lsu-tui-overview.png)
+![psn TUI overview](assets/images/psn-tui-overview.png)
 
 ## Dependencies
 
