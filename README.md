@@ -14,6 +14,11 @@
 
 ![psn TUI overview](assets/images/psn-tui-overview.png)
 
+- [x] Browse running processes in a terminal UI
+- [x] Filter processes by text match `<FILTER>` or regular expression -r `<PATTERN>`
+- [x] Show only the current user's processes with `-u/--user`
+- [x] Send Unix signals `1` through `9` to the selected process
+
 ## Dependencies
 
 - any GNU/Linux system with `ps` obviously
