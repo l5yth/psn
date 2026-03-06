@@ -85,3 +85,24 @@ jobs:
             ebuild /var/db/repos/localrepo/app-misc/psn/psn-9999.ebuild manifest
           FEATURES="-ipc-sandbox -network-sandbox -pid-sandbox -mount-sandbox -usersandbox -userpriv" \
             emerge -pv =app-misc/psn-9999
+
+  nix:
+    runs-on: ubuntu-latest
+    container:
+      image: nixos/nix:latest
+
+    steps:
+      - name: Enable flakes
+        run: |
+          mkdir -p /etc/nix
+          echo "experimental-features = nix-command flakes" >> /etc/nix/nix.conf
+
+      - name: Clone repository
+        run: |
+          git clone "https://github.com/${GITHUB_REPOSITORY}.git" /psn
+          git -C /psn checkout "${GITHUB_SHA}"
+
+      - name: Build nix flake
+        run: |
+          cd /psn
+          nix build . --option sandbox false --print-build-logs
