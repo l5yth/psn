@@ -250,10 +250,15 @@ pub fn apply_action(
             )
             .ok()
             .flatten();
+            let f = compiled.clone();
             app.filter_input = Some(app::FilterInput {
                 text: pre_fill,
                 compiled,
             });
+            // Apply the pre-filled filter immediately so the row list matches
+            // what the footer shows without waiting for the first keystroke.
+            app.refresh_preserving_status(refresh_rows(f.as_ref()));
+            app.select_first();
             ActionResult {
                 should_quit: false,
                 needs_redraw: true,
@@ -341,6 +346,7 @@ pub fn apply_action(
             if was_active {
                 let f = app.compiled_filter.clone();
                 app.refresh_preserving_status(refresh_rows(f.as_ref()));
+                app.select_first();
             }
             ActionResult {
                 should_quit: false,
@@ -1293,6 +1299,50 @@ mod tests {
         assert!(!result.needs_redraw);
         // Rows must not change since there was nothing to cancel.
         assert_eq!(app.rows[0].pid, 11);
+    }
+
+    #[test]
+    fn apply_action_begin_interactive_filter_applies_prefill_immediately() {
+        // Start with two rows; refresh returns only foo when given a substring filter.
+        let mut app = App::with_rows(None, vec![row(11, "foo"), row(22, "bar")]);
+        app.compiled_filter = crate::process::compile_filter(Some("foo".to_string()), false)
+            .ok()
+            .flatten();
+        // Simulate the live process list: only foo matches the pre-filled filter.
+        let mut refresh = |f: Option<&crate::process::FilterSpec>| {
+            if f.is_some() {
+                vec![row(11, "foo")]
+            } else {
+                vec![row(11, "foo"), row(22, "bar")]
+            }
+        };
+        let mut sender = |_: i32, _: Signal| Ok(());
+
+        apply_action(
+            &mut app,
+            Action::BeginInteractiveFilter,
+            &mut refresh,
+            &mut sender,
+        );
+        // The row list must already reflect the pre-filled filter.
+        assert_eq!(app.rows.len(), 1);
+        assert_eq!(app.rows[0].pid, 11);
+    }
+
+    #[test]
+    fn apply_action_filter_cancel_resets_selection_to_first() {
+        let mut app = App::with_rows(None, vec![row(11, "foo"), row(22, "bar")]);
+        app.filter_input = Some(app::FilterInput {
+            text: "x".to_string(),
+            compiled: None,
+        });
+        app.table_state.select(Some(1)); // selection somewhere other than first
+        let mut refresh =
+            |_: Option<&crate::process::FilterSpec>| vec![row(11, "foo"), row(22, "bar")];
+        let mut sender = |_: i32, _: Signal| Ok(());
+
+        apply_action(&mut app, Action::FilterCancel, &mut refresh, &mut sender);
+        assert_eq!(app.table_state.selected(), Some(0));
     }
 
     #[test]
