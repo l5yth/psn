@@ -7,6 +7,9 @@
 [![Codecov](https://codecov.io/gh/l5yth/psn/graph/badge.svg)](https://codecov.io/gh/l5yth/psn)
 [![GitHub Release](https://img.shields.io/github/v/release/l5yth/psn)](https://github.com/l5yth/psn/releases)
 [![Crates.io](https://img.shields.io/crates/v/psn.svg)](https://crates.io/crates/psn)
+[![AUR Version](https://img.shields.io/aur/version/psn-bin?logo=archlinux)](https://aur.archlinux.org/packages/psn-bin)
+[![Nix Flake](https://img.shields.io/badge/nix-flake-5277C3?logo=nixos)](https://github.com/l5yth/psn/blob/main/flake.nix)
+[![Gentoo](https://img.shields.io/badge/gentoo-ebuild-54487A?logo=gentoo)](https://github.com/l5yth/psn/tree/main/packaging/gentoo)
 [![Top Language](https://img.shields.io/github/languages/top/l5yth/psn)](https://github.com/l5yth/psn)
 [![License: Apache-2.0](https://img.shields.io/github/license/l5yth/psn)](https://github.com/l5yth/psn/blob/main/LICENSE)
 
