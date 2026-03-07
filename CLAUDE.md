@@ -5,21 +5,25 @@
 
 ## Project Structure & Module Organization
 - `src/main.rs`: thin binary entry point only (argument parsing, wiring, startup/shutdown).
-- `src/`: feature modules. Keep logic out of `main.rs`.
+- `src/lib.rs`: crate root; re-exports public API for integration tests.
+- `src/cli.rs`: command-line argument parsing (`clap`).
+- `src/app.rs`: mutable application state (selection, filter, collapsed pids).
+- `src/runtime.rs`: key mapping, action dispatch, event loop, terminal setup/restore.
+- `src/ui.rs`: rendering only (ratatui widgets).
+- `src/process.rs`: process discovery, filter compilation, sort mapping.
+- `src/signal.rs`: signal mapping and send helpers.
+- `src/model.rs`: shared data types (`ProcRow`).
+- `src/tree.rs`: tree display order and collapse logic.
+- `src/debug_tui.rs`: deterministic debug/demo mode (no real processes).
 - `tests/`: integration tests.
 - `.github/workflows/`: CI for formatting, linting, tests, docs, and coverage.
 - `Cargo.toml`: crate metadata/dependencies.
 - `packaging/`: distro packaging files (Arch/Gentoo).
 - `target/`: generated build artifacts; never commit.
 
-Current state is still mostly monolithic. Ongoing refactors must split code into focused modules, such as:
-- `src/app.rs`: app state and event loop orchestration.
-- `src/ui.rs`: rendering only.
-- `src/process.rs`: process discovery/filter/sort mapping.
-- `src/signal.rs`: signal mapping and send helpers.
-- `src/terminal.rs`: terminal setup/restore lifecycle.
+Future refactor: extract `src/terminal.rs` for terminal setup/restore lifecycle (currently in `runtime.rs`).
 
-Rules:
+Module rules:
 - Keep modules small and cohesive.
 - Avoid cross-module cycles and hidden shared mutable state.
 - Prefer pure functions for business logic; isolate side effects at boundaries.
