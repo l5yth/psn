@@ -15,9 +15,7 @@ KEYWORDS=""
 IUSE=""
 PROPERTIES="live"
 
-RDEPEND="
-	sys-process/procps
-"
+
 BDEPEND="
 	dev-lang/rust
 "
