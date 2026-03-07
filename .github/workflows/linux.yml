@@ -89,7 +89,7 @@ jobs:
   nix:
     runs-on: ubuntu-latest
     container:
-      image: nixos/nix:latest
+      image: nixos/nix:2.34.0
 
     steps:
       - name: Enable flakes
@@ -99,8 +99,9 @@ jobs:
 
       - name: Clone repository
         run: |
-          git clone "https://github.com/${GITHUB_REPOSITORY}.git" /psn
-          git -C /psn checkout "${GITHUB_SHA}"
+          git init /psn
+          git -C /psn fetch --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" "${GITHUB_REF}"
+          git -C /psn checkout FETCH_HEAD
 
       - name: Build nix flake
         run: |
