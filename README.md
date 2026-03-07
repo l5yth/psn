@@ -23,6 +23,8 @@
 - [x] Show only the current user's processes with `-u`
 - [x] Send Unix signals `1` through `9` to the selected process
 
+Read more: [Dev.to: psn - a minimalist process navigator for Linux](https://dev.to/l5y/psn-a-minimalist-process-navigator-for-linux-37jn)
+
 ## Dependencies
 
 - GNU/Linux (process data is read from `/proc` via [sysinfo](https://crates.io/crates/sysinfo) — no external binaries required)
@@ -119,8 +121,8 @@ In-app keys:
 - `↑` / `↓`: move selection
 - `PgUp` / `PgDn`: page up/down
 - `←` / `→`: collapse / expand tree node
-- `/`: open interactive filter prompt (live, substring match)
-- `1`..`9`: send corresponding signal to selected process (prompts for confirmation)
+- `/`: open interactive filter prompt (live, substring match); `Enter` confirms, `Esc` cancels
+- `1`..`9`: send corresponding signal to selected process (prompts for confirmation); not available while the filter prompt is open — press `Enter` or `Esc` first
 
 ## Development
 
