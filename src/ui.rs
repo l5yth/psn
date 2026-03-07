@@ -21,7 +21,11 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, Wrap},
 };
 
-use crate::{app::App, process::status_dot_color, tree::display_rows};
+use crate::{
+    app::App,
+    process::{FilterSpec, status_dot_color},
+    tree::display_rows,
+};
 
 const COLUMN_HEADERS: [&str; 6] = ["", "pid", "name", "command", "status", "user"];
 
@@ -36,9 +40,74 @@ pub fn build_title(filter: Option<&str>, _count: usize) -> String {
 /// Build the static help text.
 pub fn build_help(count: usize) -> String {
     format!(
-        "processes: {} | ↑/↓: select | ←/→: collapse/expand | 1-9: send signal (1-9) | r: refresh | q: quit",
+        "processes: {} | ↑/↓: select | ←/→: collapse/expand | 1-9: send signal | /: filter | r: refresh | q: quit",
         count
     )
+}
+
+/// Return styled spans for `text` with all occurrences of the active filter highlighted.
+/// The prefix connector (tree characters) must be prepended by the caller as a plain span.
+fn highlight_matches(text: &str, filter: Option<&FilterSpec>) -> Vec<Span<'static>> {
+    let highlight = Style::default()
+        .fg(Color::Black)
+        .bg(Color::Yellow)
+        .add_modifier(Modifier::BOLD);
+
+    let Some(filter) = filter else {
+        return vec![Span::raw(text.to_owned())];
+    };
+
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut last = 0usize;
+
+    match filter {
+        FilterSpec::Substring {
+            lowered,
+            raw,
+            ascii_only,
+        } => {
+            let text_lower = if *ascii_only {
+                text.to_ascii_lowercase()
+            } else {
+                text.to_lowercase()
+            };
+            let mut pos = 0usize;
+            while pos < text_lower.len() {
+                match text_lower[pos..].find(lowered.as_str()) {
+                    None => break,
+                    Some(rel) => {
+                        let start = pos + rel;
+                        let end = start + raw.len();
+                        if start > last {
+                            spans.push(Span::raw(text[last..start].to_owned()));
+                        }
+                        spans.push(Span::styled(text[start..end].to_owned(), highlight));
+                        last = end;
+                        pos = end.max(pos + 1);
+                    }
+                }
+            }
+        }
+        FilterSpec::Regex(re) => {
+            for m in re.find_iter(text) {
+                if m.start() > last {
+                    spans.push(Span::raw(text[last..m.start()].to_owned()));
+                }
+                spans.push(Span::styled(text[m.start()..m.end()].to_owned(), highlight));
+                last = m.end();
+            }
+        }
+    }
+
+    if last < text.len() {
+        spans.push(Span::raw(text[last..].to_owned()));
+    }
+
+    if spans.is_empty() {
+        vec![Span::raw(text.to_owned())]
+    } else {
+        spans
+    }
 }
 
 /// Build the footer text with optional status suffix.
@@ -61,6 +130,20 @@ pub fn render(frame: &mut Frame<'_>, app: &mut App) {
     let header = Row::new(COLUMN_HEADERS.map(Cell::from))
         .style(Style::default().add_modifier(Modifier::BOLD));
 
+    // Clone the active filter upfront to avoid borrow conflicts with &mut app.table_state.
+    let active_filter: Option<FilterSpec> = app
+        .filter_input
+        .as_ref()
+        .and_then(|fi| fi.compiled.clone())
+        .or_else(|| app.compiled_filter.clone());
+
+    // Title shows the interactive input text while typing, otherwise the confirmed filter.
+    let title_text: Option<String> = app
+        .filter_input
+        .as_ref()
+        .map(|fi| fi.text.clone())
+        .or_else(|| app.filter.clone());
+
     let tree_order = display_rows(&app.rows, &app.collapsed_pids);
     let body = tree_order.into_iter().map(|display_row| {
         let row = &app.rows[display_row.row_index];
@@ -69,12 +152,18 @@ pub fn render(frame: &mut Frame<'_>, app: &mut App) {
         } else {
             row.name.clone()
         };
-        let tree_name = format!("{}{}", display_row.prefix, name);
+
+        // Prefix (tree connectors) is plain; only the name portion is highlighted.
+        let mut name_spans = vec![Span::raw(display_row.prefix.clone())];
+        name_spans.extend(highlight_matches(&name, active_filter.as_ref()));
+
+        let cmd_spans = highlight_matches(&row.cmd, active_filter.as_ref());
+
         Row::new([
             Cell::from("●").style(Style::default().fg(status_dot_color(row.status))),
             Cell::from(row.pid.to_string()),
-            Cell::from(tree_name),
-            Cell::from(row.cmd.as_str()),
+            Cell::from(Line::from(name_spans)),
+            Cell::from(Line::from(cmd_spans)),
             Cell::from(format!("{:?}", row.status)),
             Cell::from(row.user.as_ref()),
         ])
@@ -94,7 +183,7 @@ pub fn render(frame: &mut Frame<'_>, app: &mut App) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(build_title(app.filter.as_deref(), app.rows.len())),
+                .title(build_title(title_text.as_deref(), app.rows.len())),
         )
         .column_spacing(1)
         .row_highlight_style(
@@ -105,12 +194,16 @@ pub fn render(frame: &mut Frame<'_>, app: &mut App) {
 
     frame.render_stateful_widget(table, chunks[0], &mut app.table_state);
 
-    let help = build_help(app.rows.len());
-    let footer = build_footer(&help, &app.status);
-    frame.render_widget(
-        Paragraph::new(footer).style(Style::default().fg(Color::DarkGray)),
-        chunks[1],
-    );
+    if let Some(ref fi) = app.filter_input {
+        frame.render_widget(Paragraph::new(format!("/ {}█", fi.text)), chunks[1]);
+    } else {
+        let help = build_help(app.rows.len());
+        let footer = build_footer(&help, &app.status);
+        frame.render_widget(
+            Paragraph::new(footer).style(Style::default().fg(Color::DarkGray)),
+            chunks[1],
+        );
+    }
 
     if let Some(prompt) = app.confirmation_prompt() {
         let modal = centered_rect(80, 5, size);

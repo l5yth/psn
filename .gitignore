@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 /target
+/lcov.info
 
 # Packaging build artifacts
 /packaging/archlinux/*.pkg.tar.*

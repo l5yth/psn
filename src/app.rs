@@ -23,6 +23,7 @@ use ratatui::widgets::TableState;
 
 use crate::{
     model::ProcRow,
+    process::FilterSpec,
     signal::signal_from_digit,
     tree::{display_order_indices, display_rows},
 };
@@ -33,11 +34,22 @@ struct ProcessIdentity {
     start_time: u64,
 }
 
+/// State for the interactive `/` filter prompt.
+#[derive(Debug)]
+pub struct FilterInput {
+    /// Raw text the user has typed so far.
+    pub text: String,
+    /// Compiled substring spec for `text`; `None` when `text` is empty.
+    pub compiled: Option<FilterSpec>,
+}
+
 /// Mutable application state shared between input handling and rendering.
 #[derive(Debug)]
 pub struct App {
     /// Optional process filter supplied from argv.
     pub filter: Option<String>,
+    /// Compiled form of the active CLI filter (substring or regex).
+    pub compiled_filter: Option<FilterSpec>,
     /// Current table rows.
     pub rows: Vec<ProcRow>,
     /// Selected row index in the process table.
@@ -48,6 +60,8 @@ pub struct App {
     pub pending_confirmation: Option<SignalConfirmation>,
     /// Pids whose visible descendants are hidden in tree mode.
     pub collapsed_pids: HashSet<i32>,
+    /// Active interactive filter prompt; `Some` while the user is typing `/`.
+    pub filter_input: Option<FilterInput>,
 }
 
 /// Pending signal action that requires user confirmation.
@@ -73,17 +87,28 @@ impl App {
 
         Self {
             filter,
+            compiled_filter: None,
             rows,
             table_state,
             status: String::new(),
             pending_confirmation: None,
             collapsed_pids: HashSet::new(),
+            filter_input: None,
         }
     }
 
     /// Return the currently configured filter as a borrowed string.
     pub fn filter(&self) -> Option<&str> {
         self.filter.as_deref()
+    }
+
+    /// Return the compiled filter that should be used for row matching and highlighting.
+    /// Prefers the interactive filter input when active, falls back to the CLI filter.
+    pub fn active_filter(&self) -> Option<&FilterSpec> {
+        self.filter_input
+            .as_ref()
+            .and_then(|fi| fi.compiled.as_ref())
+            .or(self.compiled_filter.as_ref())
     }
 
     /// Replace row data, keep selection bounded, and clear status text.

@@ -17,6 +17,7 @@
 //! Hidden synthetic-data TUI used for local UI development.
 
 use std::{
+    cell::Cell,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -37,7 +38,9 @@ const MAX_DEBUG_ROWS: usize = 21;
 /// Run the hidden debug-only TUI with synthetic process rows.
 pub(crate) fn run() -> Result<()> {
     let mut terminal = setup_terminal()?;
-    let mut seed = initial_seed();
+    // Use Cell so the closure captures by shared reference, satisfying HRTB.
+    let seed = Cell::new(next_seed(initial_seed()));
+    let initial_rows = build_debug_rows(seed.get());
     let mut draw = |app: &mut App| -> Result<()> {
         terminal.draw(|frame| ui::render(frame, app))?;
         Ok(())
@@ -49,12 +52,12 @@ pub(crate) fn run() -> Result<()> {
             Ok(None)
         }
     };
-    let mut refresh_rows = || {
-        seed = next_seed(seed);
-        build_debug_rows(seed)
+    let mut refresh_rows = |_: Option<&crate::process::FilterSpec>| {
+        seed.set(next_seed(seed.get()));
+        build_debug_rows(seed.get())
     };
     let mut sender = debug_signal_sender;
-    let mut app = App::with_rows(None, refresh_rows());
+    let mut app = App::with_rows(None, initial_rows);
     app.status = "debug tui: synthetic rows only".to_string();
     let result = run_event_loop(
         &mut app,
