@@ -19,6 +19,7 @@
 
 - [x] Browse running processes in a terminal UI
 - [x] Filter processes by text match `<FILTER>` or regular expression `-r <PATTERN>`
+- [x] Filter interactively while browsing with `/`
 - [x] Show only the current user's processes with `-u`
 - [x] Send Unix signals `1` through `9` to the selected process
 
@@ -74,7 +75,7 @@ cargo run --release --
 ## Usage
 
 ```text
-psn v0.1.1
+psn v0.1.2
 process status navigator
 apache v2 (c) 2026 l5yth
 
@@ -116,8 +117,11 @@ In-app keys:
 
 - `q`: quit
 - `r`: refresh process list
-- `↑` / `↓`: move selection in process list
-- `1`..`9`: send corresponding kill signal to selected process
+- `↑` / `↓`: move selection
+- `PgUp` / `PgDn`: page up/down
+- `←` / `→`: collapse / expand tree node
+- `/`: open interactive filter prompt (live, substring match)
+- `1`..`9`: send corresponding signal to selected process (prompts for confirmation)
 
 ## Development
 
