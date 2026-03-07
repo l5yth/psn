@@ -25,9 +25,8 @@
 
 ## Dependencies
 
-- any GNU/Linux system with `ps` obviously
-- `ps` available in `$PATH`
-- Some current Rust stable toolchain (Rust 2024 edition, Cargo)
+- GNU/Linux (process data is read from `/proc` via [sysinfo](https://crates.io/crates/sysinfo) — no external binaries required)
+- Rust stable toolchain (Rust 2024 edition, Cargo) for building from source
 
 Core crates: `ratatui`, `crossterm`, `sysinfo`, `nix`, `anyhow`, `users`.
 
