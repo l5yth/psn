@@ -242,8 +242,9 @@ fn centered_rect(width_percent: u16, height: u16, area: Rect) -> Rect {
 
 #[cfg(test)]
 mod tests {
-    use super::{COLUMN_HEADERS, build_footer, build_help, build_title, render};
+    use super::{COLUMN_HEADERS, build_footer, build_help, build_title, highlight_matches, render};
     use crate::{app::App, model::ProcRow, tree::display_order_with_prefix};
+    use crate::{app::FilterInput, process};
     use ratatui::{Terminal, backend::TestBackend};
     use std::{collections::HashSet, sync::Arc};
     use sysinfo::ProcessStatus;
@@ -621,5 +622,127 @@ mod tests {
 
         assert!(text.contains("service [...]"));
         assert!(!text.contains("worker"));
+    }
+
+    #[test]
+    fn highlight_matches_no_filter_returns_single_plain_span() {
+        let spans = highlight_matches("hello world", None);
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].content, "hello world");
+        assert_eq!(spans[0].style, ratatui::style::Style::default());
+    }
+
+    #[test]
+    fn highlight_matches_substring_no_match_returns_plain_span() {
+        let filter = process::compile_filter(Some("xyz".to_string()), false)
+            .ok()
+            .flatten();
+        let spans = highlight_matches("hello world", filter.as_ref());
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].content, "hello world");
+    }
+
+    #[test]
+    fn highlight_matches_substring_single_match_returns_three_spans() {
+        let filter = process::compile_filter(Some("world".to_string()), false)
+            .ok()
+            .flatten();
+        let spans = highlight_matches("hello world!", filter.as_ref());
+        // "hello " + highlighted "world" + "!"
+        assert_eq!(spans.len(), 3);
+        assert_eq!(spans[0].content, "hello ");
+        assert_eq!(spans[1].content, "world");
+        assert_eq!(spans[2].content, "!");
+        // Middle span must be styled (highlighted).
+        assert_ne!(spans[1].style, ratatui::style::Style::default());
+    }
+
+    #[test]
+    fn highlight_matches_substring_multiple_matches() {
+        let filter = process::compile_filter(Some("o".to_string()), false)
+            .ok()
+            .flatten();
+        let spans = highlight_matches("foo bar boo", filter.as_ref());
+        // "f" + "o" + "o" + " bar b" + "o" + "o"  (matches at positions 1,2,9,10)
+        let highlighted: Vec<&str> = spans
+            .iter()
+            .filter(|s| s.style != ratatui::style::Style::default())
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert_eq!(highlighted.len(), 4);
+        assert!(highlighted.iter().all(|&s| s == "o"));
+    }
+
+    #[test]
+    fn highlight_matches_regex_match() {
+        let filter = process::compile_filter(Some("\\d+".to_string()), true)
+            .ok()
+            .flatten();
+        let spans = highlight_matches("proc123end", filter.as_ref());
+        // "proc" + highlighted "123" + "end"
+        assert_eq!(spans.len(), 3);
+        assert_eq!(spans[1].content, "123");
+        assert_ne!(spans[1].style, ratatui::style::Style::default());
+    }
+
+    #[test]
+    fn highlight_matches_regex_no_match_returns_plain_span() {
+        let filter = process::compile_filter(Some("\\d+".to_string()), true)
+            .ok()
+            .flatten();
+        let spans = highlight_matches("no digits here", filter.as_ref());
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].content, "no digits here");
+    }
+
+    #[test]
+    fn highlight_matches_substring_non_ascii_filter() {
+        // "café" contains é (non-ASCII), so the unicode lowercase path is taken.
+        let filter = process::compile_filter(Some("café".to_string()), false)
+            .ok()
+            .flatten();
+        let spans = highlight_matches("order café here", filter.as_ref());
+        let highlighted: Vec<&str> = spans
+            .iter()
+            .filter(|s| s.style != ratatui::style::Style::default())
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert_eq!(highlighted, vec!["café"]);
+    }
+
+    #[test]
+    fn highlight_matches_empty_text_returns_plain_empty_span() {
+        let filter = process::compile_filter(Some("foo".to_string()), false)
+            .ok()
+            .flatten();
+        let spans = highlight_matches("", filter.as_ref());
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].content, "");
+    }
+
+    #[test]
+    fn render_shows_filter_prompt_footer_when_filter_input_active() {
+        let backend = TestBackend::new(120, 20);
+        let mut terminal = Terminal::new(backend).expect("terminal must initialize");
+        let mut app = App::with_rows(None, vec![sample_row()]);
+        app.filter_input = Some(FilterInput {
+            text: "psn".to_string(),
+            compiled: None,
+        });
+
+        terminal
+            .draw(|frame| render(frame, &mut app))
+            .expect("render should succeed");
+
+        let backend = terminal.backend();
+        let buffer = backend.buffer().clone();
+        let text: String = buffer
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<Vec<_>>()
+            .join("");
+
+        assert!(text.contains("/ psn"));
     }
 }

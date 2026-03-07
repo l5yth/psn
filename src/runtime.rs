@@ -107,6 +107,13 @@ pub fn map_key_event_to_action(
             KeyCode::Backspace => Action::FilterInputBackspace,
             KeyCode::Enter => Action::FilterConfirm,
             KeyCode::Esc => Action::FilterCancel,
+            // Allow scrolling through results without leaving filter mode.
+            KeyCode::Up => Action::MoveUp,
+            KeyCode::Down => Action::MoveDown,
+            KeyCode::PageUp => Action::PageUp,
+            KeyCode::PageDown => Action::PageDown,
+            KeyCode::Left => Action::CollapseTree,
+            KeyCode::Right => Action::ExpandTree,
             _ => Action::Noop,
         };
     }
@@ -253,42 +260,47 @@ pub fn apply_action(
             }
         }
         Action::FilterInputChar(c) => {
-            if let Some(ref mut fi) = app.filter_input {
-                fi.text.push(c);
-                fi.compiled = process::compile_filter(
-                    if fi.text.is_empty() {
-                        None
-                    } else {
-                        Some(fi.text.clone())
-                    },
-                    false,
-                )
+            let Some(ref mut fi) = app.filter_input else {
+                return ActionResult {
+                    should_quit: false,
+                    needs_redraw: false,
+                };
+            };
+            fi.text.push(c);
+            // After push the text is always non-empty, so always compile.
+            fi.compiled = process::compile_filter(Some(fi.text.clone()), false)
                 .ok()
                 .flatten();
-            }
-            let f = app.filter_input.as_ref().and_then(|fi| fi.compiled.clone());
+            let f = fi.compiled.clone();
             app.refresh_preserving_status(refresh_rows(f.as_ref()));
+            // Jump to first result so all matches are visible from the top.
+            app.select_first();
             ActionResult {
                 should_quit: false,
                 needs_redraw: true,
             }
         }
         Action::FilterInputBackspace => {
-            if let Some(ref mut fi) = app.filter_input {
-                fi.text.pop();
-                fi.compiled = process::compile_filter(
-                    if fi.text.is_empty() {
-                        None
-                    } else {
-                        Some(fi.text.clone())
-                    },
-                    false,
-                )
-                .ok()
-                .flatten();
-            }
-            let f = app.filter_input.as_ref().and_then(|fi| fi.compiled.clone());
+            let Some(ref mut fi) = app.filter_input else {
+                return ActionResult {
+                    should_quit: false,
+                    needs_redraw: false,
+                };
+            };
+            fi.text.pop();
+            fi.compiled = process::compile_filter(
+                if fi.text.is_empty() {
+                    None
+                } else {
+                    Some(fi.text.clone())
+                },
+                false,
+            )
+            .ok()
+            .flatten();
+            let f = fi.compiled.clone();
             app.refresh_preserving_status(refresh_rows(f.as_ref()));
+            app.select_first();
             ActionResult {
                 should_quit: false,
                 needs_redraw: true,
@@ -643,10 +655,11 @@ mod tests {
     #[test]
     fn apply_action_move_actions_change_selection() {
         let mut app = App::with_rows(None, vec![row(11, "foo"), row(22, "bar"), row(33, "baz")]);
-        let mut refresh = |_: Option<&crate::process::FilterSpec>| {
-            vec![row(11, "foo"), row(22, "bar"), row(33, "baz")]
-        };
+        let rows = vec![row(11, "foo"), row(22, "bar"), row(33, "baz")];
+        let mut refresh = |_: Option<&crate::process::FilterSpec>| rows.clone();
         let mut sender = |_: i32, _: Signal| Ok(());
+        // Exercise the refresh closure so its body is covered.
+        apply_action(&mut app, Action::Refresh, &mut refresh, &mut sender);
 
         assert_eq!(
             apply_action(&mut app, Action::MoveDown, &mut refresh, &mut sender),
@@ -843,15 +856,17 @@ mod tests {
             Ok(())
         };
 
+        let rows = vec![row(11, "foo"), row(12, "bar")];
         let mut events = vec![
+            // 'r' ensures the refresh closure body is executed.
+            Event::Key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE)),
             Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)),
             Event::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE)),
         ]
         .into_iter();
         let mut next_event =
             |_timeout: Duration| -> anyhow::Result<Option<Event>> { Ok(events.next()) };
-        let mut refresh =
-            |_: Option<&crate::process::FilterSpec>| vec![row(11, "foo"), row(12, "bar")];
+        let mut refresh = |_: Option<&crate::process::FilterSpec>| rows.clone();
         let mut sender = |_: i32, _: Signal| Ok(());
 
         run_event_loop(
@@ -871,17 +886,19 @@ mod tests {
     fn run_event_loop_ignores_non_press_key_events() {
         let mut app = App::with_rows(None, vec![row(11, "foo"), row(12, "bar")]);
         let mut draw = |_: &mut App| -> anyhow::Result<()> { Ok(()) };
+        let rows = vec![row(11, "foo"), row(12, "bar")];
         let release =
             KeyEvent::new_with_kind(KeyCode::Down, KeyModifiers::NONE, KeyEventKind::Release);
         let mut events = vec![
+            // 'r' ensures the refresh closure body is executed.
+            Event::Key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE)),
             Event::Key(release),
             Event::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE)),
         ]
         .into_iter();
         let mut next_event =
             |_timeout: Duration| -> anyhow::Result<Option<Event>> { Ok(events.next()) };
-        let mut refresh =
-            |_: Option<&crate::process::FilterSpec>| vec![row(11, "foo"), row(12, "bar")];
+        let mut refresh = |_: Option<&crate::process::FilterSpec>| rows.clone();
         let mut sender = |_: i32, _: Signal| Ok(());
 
         run_event_loop(
@@ -1114,5 +1131,188 @@ mod tests {
         let result = apply_action(&mut app, Action::FilterCancel, &mut refresh, &mut sender);
         assert!(app.filter_input.is_none());
         assert!(result.needs_redraw);
+    }
+
+    #[test]
+    fn map_key_event_to_action_filter_mode_allows_navigation_keys() {
+        assert_eq!(
+            map_key_event_to_action(KeyCode::Up, false, true),
+            Action::MoveUp
+        );
+        assert_eq!(
+            map_key_event_to_action(KeyCode::Down, false, true),
+            Action::MoveDown
+        );
+        assert_eq!(
+            map_key_event_to_action(KeyCode::PageUp, false, true),
+            Action::PageUp
+        );
+        assert_eq!(
+            map_key_event_to_action(KeyCode::PageDown, false, true),
+            Action::PageDown
+        );
+        assert_eq!(
+            map_key_event_to_action(KeyCode::Left, false, true),
+            Action::CollapseTree
+        );
+        assert_eq!(
+            map_key_event_to_action(KeyCode::Right, false, true),
+            Action::ExpandTree
+        );
+    }
+
+    #[test]
+    fn map_key_event_to_action_filter_mode_noop_for_unknown_key() {
+        assert_eq!(
+            map_key_event_to_action(KeyCode::F(1), false, true),
+            Action::Noop
+        );
+    }
+
+    #[test]
+    fn map_key_event_to_action_noop_for_unknown_key_in_normal_mode() {
+        assert_eq!(
+            map_key_event_to_action(KeyCode::F(1), false, false),
+            Action::Noop
+        );
+    }
+
+    #[test]
+    fn apply_action_begin_interactive_filter_prefills_existing_substring() {
+        let mut app = App::with_rows(None, vec![row(11, "foo")]);
+        app.compiled_filter = crate::process::compile_filter(Some("foo".to_string()), false)
+            .ok()
+            .flatten();
+        let mut refresh = |_: Option<&crate::process::FilterSpec>| vec![row(11, "foo")];
+        let mut sender = |_: i32, _: Signal| Ok(());
+
+        apply_action(
+            &mut app,
+            Action::BeginInteractiveFilter,
+            &mut refresh,
+            &mut sender,
+        );
+        let fi = app.filter_input.as_ref().unwrap();
+        assert_eq!(fi.text, "foo");
+        assert!(fi.compiled.is_some());
+    }
+
+    #[test]
+    fn apply_action_filter_input_char_noop_when_not_in_filter_mode() {
+        let mut app = App::with_rows(None, vec![row(11, "foo")]);
+        let mut refresh = |_: Option<&crate::process::FilterSpec>| vec![row(22, "bar")];
+        let mut sender = |_: i32, _: Signal| Ok(());
+
+        let result = apply_action(
+            &mut app,
+            Action::FilterInputChar('x'),
+            &mut refresh,
+            &mut sender,
+        );
+        assert!(!result.needs_redraw);
+        // Rows must not change since filter mode is not active.
+        assert_eq!(app.rows[0].pid, 11);
+    }
+
+    #[test]
+    fn apply_action_filter_input_backspace_noop_when_not_in_filter_mode() {
+        let mut app = App::with_rows(None, vec![row(11, "foo")]);
+        let mut refresh = |_: Option<&crate::process::FilterSpec>| vec![row(22, "bar")];
+        let mut sender = |_: i32, _: Signal| Ok(());
+
+        let result = apply_action(
+            &mut app,
+            Action::FilterInputBackspace,
+            &mut refresh,
+            &mut sender,
+        );
+        assert!(!result.needs_redraw);
+        assert_eq!(app.rows[0].pid, 11);
+    }
+
+    #[test]
+    fn apply_action_filter_input_backspace_clears_compiled_when_text_becomes_empty() {
+        let mut app = App::with_rows(None, vec![row(11, "foo"), row(22, "bar")]);
+        app.filter_input = Some(app::FilterInput {
+            text: "f".to_string(),
+            compiled: crate::process::compile_filter(Some("f".to_string()), false)
+                .ok()
+                .flatten(),
+        });
+        let mut refresh =
+            |_: Option<&crate::process::FilterSpec>| vec![row(11, "foo"), row(22, "bar")];
+        let mut sender = |_: i32, _: Signal| Ok(());
+
+        apply_action(
+            &mut app,
+            Action::FilterInputBackspace,
+            &mut refresh,
+            &mut sender,
+        );
+        let fi = app.filter_input.as_ref().unwrap();
+        assert_eq!(fi.text, "");
+        assert!(fi.compiled.is_none());
+    }
+
+    #[test]
+    fn apply_action_filter_confirm_noop_when_not_in_filter_mode() {
+        let mut app = App::with_rows(None, vec![row(11, "foo")]);
+        let mut refresh = |_: Option<&crate::process::FilterSpec>| vec![row(11, "foo")];
+        let mut sender = |_: i32, _: Signal| Ok(());
+
+        apply_action(&mut app, Action::FilterConfirm, &mut refresh, &mut sender);
+        // filter_input was None, compiled_filter stays None, rows refresh with None filter.
+        assert!(app.filter_input.is_none());
+        assert!(app.compiled_filter.is_none());
+    }
+
+    #[test]
+    fn apply_action_filter_confirm_with_empty_text_clears_filter() {
+        let mut app = App::with_rows(None, vec![row(11, "foo"), row(22, "bar")]);
+        app.filter_input = Some(app::FilterInput {
+            text: String::new(),
+            compiled: None,
+        });
+        let mut refresh =
+            |_: Option<&crate::process::FilterSpec>| vec![row(11, "foo"), row(22, "bar")];
+        let mut sender = |_: i32, _: Signal| Ok(());
+
+        apply_action(&mut app, Action::FilterConfirm, &mut refresh, &mut sender);
+        assert!(app.filter_input.is_none());
+        assert!(app.filter.is_none());
+        assert!(app.compiled_filter.is_none());
+    }
+
+    #[test]
+    fn apply_action_filter_cancel_noop_when_not_active() {
+        let mut app = App::with_rows(None, vec![row(11, "foo")]);
+        let mut refresh = |_: Option<&crate::process::FilterSpec>| vec![row(22, "bar")];
+        let mut sender = |_: i32, _: Signal| Ok(());
+
+        let result = apply_action(&mut app, Action::FilterCancel, &mut refresh, &mut sender);
+        assert!(!result.needs_redraw);
+        // Rows must not change since there was nothing to cancel.
+        assert_eq!(app.rows[0].pid, 11);
+    }
+
+    #[test]
+    fn apply_action_filter_input_char_resets_selection_to_first() {
+        let mut app = App::with_rows(None, vec![row(11, "foo"), row(22, "bar")]);
+        app.filter_input = Some(app::FilterInput {
+            text: String::new(),
+            compiled: None,
+        });
+        app.table_state.select(Some(1)); // pre-select last row
+        let mut refresh =
+            |_: Option<&crate::process::FilterSpec>| vec![row(11, "foo"), row(22, "bar")];
+        let mut sender = |_: i32, _: Signal| Ok(());
+
+        apply_action(
+            &mut app,
+            Action::FilterInputChar('f'),
+            &mut refresh,
+            &mut sender,
+        );
+        assert_eq!(app.table_state.selected(), Some(0));
     }
 }

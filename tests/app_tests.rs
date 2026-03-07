@@ -15,7 +15,11 @@
 */
 
 use nix::sys::signal::Signal;
-use psn::{app::App, model::ProcRow};
+use psn::{
+    app::{App, FilterInput},
+    model::ProcRow,
+    process,
+};
 use std::sync::Arc;
 use sysinfo::ProcessStatus;
 
@@ -740,4 +744,66 @@ fn begin_signal_confirmation_uses_visible_tree_selection_index() {
         .expect("pending confirmation should exist");
     assert_eq!(pending.pid, 2);
     assert_eq!(pending.process_name, "service");
+}
+
+#[test]
+fn active_filter_returns_none_when_nothing_set() {
+    let app = App::with_rows(None, vec![]);
+    assert!(app.active_filter().is_none());
+}
+
+#[test]
+fn active_filter_returns_compiled_filter_when_no_input_active() {
+    let mut app = App::with_rows(None, vec![]);
+    app.compiled_filter = process::compile_filter(Some("foo".to_string()), false)
+        .ok()
+        .flatten();
+    assert!(app.active_filter().is_some());
+}
+
+#[test]
+fn active_filter_prefers_filter_input_over_compiled_filter() {
+    let mut app = App::with_rows(None, vec![]);
+    app.compiled_filter = process::compile_filter(Some("foo".to_string()), false)
+        .ok()
+        .flatten();
+    app.filter_input = Some(FilterInput {
+        text: "bar".to_string(),
+        compiled: process::compile_filter(Some("bar".to_string()), false)
+            .ok()
+            .flatten(),
+    });
+    // active_filter should return the filter_input compiled spec, not compiled_filter.
+    let f = app.active_filter().unwrap();
+    if let psn::process::FilterSpec::Substring { raw, .. } = f {
+        assert_eq!(raw, "bar");
+    } else {
+        panic!("expected Substring variant");
+    }
+}
+
+#[test]
+fn active_filter_returns_none_when_filter_input_text_is_empty() {
+    let mut app = App::with_rows(None, vec![]);
+    app.filter_input = Some(FilterInput {
+        text: String::new(),
+        compiled: None,
+    });
+    // filter_input is Some but compiled is None; falls back to compiled_filter (also None).
+    assert!(app.active_filter().is_none());
+}
+
+#[test]
+fn select_first_selects_index_zero_when_rows_exist() {
+    let mut app = App::with_rows(None, vec![row(1), row(2), row(3)]);
+    app.table_state.select(Some(2));
+    app.select_first();
+    assert_eq!(app.table_state.selected(), Some(0));
+}
+
+#[test]
+fn select_first_selects_none_when_no_rows() {
+    let mut app = App::with_rows(None, vec![]);
+    app.select_first();
+    assert_eq!(app.table_state.selected(), None);
 }

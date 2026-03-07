@@ -357,6 +357,14 @@ impl App {
             .cloned()
     }
 
+    /// Select the first visible row; clears selection when the list is empty.
+    /// Call after filtering changes the row set to ensure the viewport starts at the top.
+    pub fn select_first(&mut self) {
+        let visible_count = self.visible_row_count();
+        self.table_state
+            .select(if visible_count == 0 { None } else { Some(0) });
+    }
+
     fn visible_row_count(&self) -> usize {
         display_order_indices(&self.rows, &self.collapsed_pids).len()
     }
