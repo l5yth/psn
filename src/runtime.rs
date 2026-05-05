@@ -146,6 +146,7 @@ pub fn apply_action(
     action: Action,
     refresh_rows: &mut dyn FnMut(Option<&process::FilterSpec>) -> Vec<ProcRow>,
     sender: &mut dyn FnMut(i32, Signal) -> Result<(), String>,
+    await_pid_gone: &mut dyn FnMut(i32),
 ) -> ActionResult {
     match action {
         Action::Quit => ActionResult {
@@ -218,7 +219,11 @@ pub fn apply_action(
                 };
             }
 
-            app.confirm_signal(sender);
+            if let Some(pid) = app.confirm_signal(sender) {
+                // Bridge the async-kill / proc-cleanup race so the upcoming
+                // refresh sees the dying process as gone instead of stale.
+                await_pid_gone(pid);
+            }
             refresh_with_selection_preserved(app, refresh_rows);
             ActionResult {
                 should_quit: false,
@@ -367,6 +372,7 @@ pub fn run_event_loop(
     next_event: &mut dyn FnMut(Duration) -> Result<Option<Event>>,
     refresh_rows: &mut dyn FnMut(Option<&process::FilterSpec>) -> Vec<ProcRow>,
     sender: &mut dyn FnMut(i32, Signal) -> Result<(), String>,
+    await_pid_gone: &mut dyn FnMut(i32),
 ) -> Result<()> {
     let mut needs_redraw = true;
 
@@ -391,7 +397,7 @@ pub fn run_event_loop(
                         app.pending_confirmation.is_some(),
                         app.filter_input.is_some(),
                     );
-                    let outcome = apply_action(app, action, refresh_rows, sender);
+                    let outcome = apply_action(app, action, refresh_rows, sender, await_pid_gone);
                     if outcome.should_quit {
                         break;
                     }
@@ -435,6 +441,7 @@ pub fn run_interactive(
         &mut next_event,
         &mut refresh_rows,
         &mut sender,
+        &mut (signal::wait_for_pid_gone_default as fn(i32)),
     );
     restore_terminal(terminal);
     result
@@ -447,11 +454,19 @@ fn run_with_runtime(
     next_event: &mut dyn FnMut(Duration) -> Result<Option<Event>>,
     refresh_rows: &mut dyn FnMut(Option<&process::FilterSpec>) -> Vec<ProcRow>,
     sender: &mut dyn FnMut(i32, Signal) -> Result<(), String>,
+    await_pid_gone: &mut dyn FnMut(i32),
 ) -> Result<()> {
     let initial_rows = refresh_rows(compiled_filter.as_ref());
     let mut app = App::with_rows(filter, initial_rows);
     app.compiled_filter = compiled_filter;
-    run_event_loop(&mut app, draw, next_event, refresh_rows, sender)
+    run_event_loop(
+        &mut app,
+        draw,
+        next_event,
+        refresh_rows,
+        sender,
+        await_pid_gone,
+    )
 }
 
 /// Configure terminal raw mode and alternate screen for TUI rendering.
@@ -493,6 +508,28 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
     use sysinfo::ProcessStatus;
+
+    /// Stand-in for the production `await_pid_gone` callback. Defined as a
+    /// real `fn` so the body is covered by `noop_await_runs` and every other
+    /// test can reference it without instantiating its own closure.
+    fn noop_await(_: i32) {}
+
+    #[test]
+    fn noop_await_runs() {
+        noop_await(0);
+    }
+
+    /// Panicking `await_pid_gone` stand-in for negative tests that assert the
+    /// callback is never invoked. Covered by `must_not_run_panics_when_called`.
+    fn must_not_run(_: i32) {
+        panic!("await_pid_gone must not be called when sender fails");
+    }
+
+    #[test]
+    #[should_panic(expected = "await_pid_gone must not be called when sender fails")]
+    fn must_not_run_panics_when_called() {
+        must_not_run(0);
+    }
 
     fn row(pid: i32, name: &str) -> ProcRow {
         ProcRow {
@@ -595,7 +632,8 @@ mod tests {
                 &mut app,
                 Action::ConfirmPendingSignal,
                 &mut refresh,
-                &mut sender
+                &mut sender,
+                &mut (noop_await as fn(i32)),
             ),
             ActionResult {
                 should_quit: false,
@@ -605,6 +643,48 @@ mod tests {
         assert!(sent);
         assert_eq!(refresh_calls, 2);
         assert!(app.pending_confirmation.is_none());
+    }
+
+    #[test]
+    fn apply_action_confirm_pending_signal_invokes_await_pid_gone_with_signaled_pid() {
+        let mut app = App::with_rows(None, vec![row(11, "foo")]);
+        app.begin_signal_confirmation(1);
+        let mut refresh = |_: Option<&crate::process::FilterSpec>| vec![row(11, "foo")];
+        let mut sender = |_: i32, _: Signal| Ok(());
+        let mut awaited: Option<i32> = None;
+        let mut await_pid_gone = |pid: i32| {
+            awaited = Some(pid);
+        };
+
+        apply_action(
+            &mut app,
+            Action::ConfirmPendingSignal,
+            &mut refresh,
+            &mut sender,
+            &mut await_pid_gone,
+        );
+
+        assert_eq!(awaited, Some(11));
+    }
+
+    #[test]
+    fn apply_action_confirm_pending_signal_skips_await_when_sender_fails() {
+        let mut app = App::with_rows(None, vec![row(11, "foo")]);
+        app.begin_signal_confirmation(1);
+        let mut refresh = |_: Option<&crate::process::FilterSpec>| vec![row(11, "foo")];
+        let mut sender = |_: i32, _: Signal| Err("denied".to_string());
+
+        // `must_not_run` panics if invoked; reaching the assert means the await
+        // hook was correctly skipped on the sender-failure path.
+        apply_action(
+            &mut app,
+            Action::ConfirmPendingSignal,
+            &mut refresh,
+            &mut sender,
+            &mut (must_not_run as fn(i32)),
+        );
+
+        assert!(app.status.contains("failed"));
     }
 
     #[test]
@@ -619,7 +699,8 @@ mod tests {
                 &mut app,
                 Action::CancelPendingSignal,
                 &mut refresh,
-                &mut sender
+                &mut sender,
+                &mut (noop_await as fn(i32)),
             ),
             ActionResult {
                 should_quit: false,
@@ -635,7 +716,13 @@ mod tests {
         let mut refresh = |_: Option<&crate::process::FilterSpec>| vec![row(11, "foo")];
         let mut sender = |_: i32, _: Signal| Ok(());
         assert_eq!(
-            apply_action(&mut app, Action::Quit, &mut refresh, &mut sender),
+            apply_action(
+                &mut app,
+                Action::Quit,
+                &mut refresh,
+                &mut sender,
+                &mut (noop_await as fn(i32))
+            ),
             ActionResult {
                 should_quit: true,
                 needs_redraw: false
@@ -649,7 +736,13 @@ mod tests {
         let mut refresh = |_: Option<&crate::process::FilterSpec>| vec![row(22, "bar")];
         let mut sender = |_: i32, _: Signal| Ok(());
         assert_eq!(
-            apply_action(&mut app, Action::Refresh, &mut refresh, &mut sender),
+            apply_action(
+                &mut app,
+                Action::Refresh,
+                &mut refresh,
+                &mut sender,
+                &mut (noop_await as fn(i32))
+            ),
             ActionResult {
                 should_quit: false,
                 needs_redraw: true
@@ -665,10 +758,22 @@ mod tests {
         let mut refresh = |_: Option<&crate::process::FilterSpec>| rows.clone();
         let mut sender = |_: i32, _: Signal| Ok(());
         // Exercise the refresh closure so its body is covered.
-        apply_action(&mut app, Action::Refresh, &mut refresh, &mut sender);
+        apply_action(
+            &mut app,
+            Action::Refresh,
+            &mut refresh,
+            &mut sender,
+            &mut (noop_await as fn(i32)),
+        );
 
         assert_eq!(
-            apply_action(&mut app, Action::MoveDown, &mut refresh, &mut sender),
+            apply_action(
+                &mut app,
+                Action::MoveDown,
+                &mut refresh,
+                &mut sender,
+                &mut (noop_await as fn(i32))
+            ),
             ActionResult {
                 should_quit: false,
                 needs_redraw: true
@@ -677,7 +782,13 @@ mod tests {
         assert_eq!(app.table_state.selected(), Some(1));
 
         assert_eq!(
-            apply_action(&mut app, Action::MoveUp, &mut refresh, &mut sender),
+            apply_action(
+                &mut app,
+                Action::MoveUp,
+                &mut refresh,
+                &mut sender,
+                &mut (noop_await as fn(i32))
+            ),
             ActionResult {
                 should_quit: false,
                 needs_redraw: true
@@ -694,7 +805,13 @@ mod tests {
         let mut sender = |_: i32, _: Signal| Ok(());
 
         assert_eq!(
-            apply_action(&mut app, Action::PageDown, &mut refresh, &mut sender),
+            apply_action(
+                &mut app,
+                Action::PageDown,
+                &mut refresh,
+                &mut sender,
+                &mut (noop_await as fn(i32))
+            ),
             ActionResult {
                 should_quit: false,
                 needs_redraw: true
@@ -703,7 +820,13 @@ mod tests {
         assert_eq!(app.table_state.selected(), Some(10));
 
         assert_eq!(
-            apply_action(&mut app, Action::PageUp, &mut refresh, &mut sender),
+            apply_action(
+                &mut app,
+                Action::PageUp,
+                &mut refresh,
+                &mut sender,
+                &mut (noop_await as fn(i32))
+            ),
             ActionResult {
                 should_quit: false,
                 needs_redraw: true
@@ -745,7 +868,13 @@ mod tests {
         let mut sender = |_: i32, _: Signal| Ok(());
 
         assert_eq!(
-            apply_action(&mut app, Action::CollapseTree, &mut refresh, &mut sender),
+            apply_action(
+                &mut app,
+                Action::CollapseTree,
+                &mut refresh,
+                &mut sender,
+                &mut (noop_await as fn(i32))
+            ),
             ActionResult {
                 should_quit: false,
                 needs_redraw: true
@@ -754,7 +883,13 @@ mod tests {
         assert!(app.collapsed_pids.contains(&2));
 
         assert_eq!(
-            apply_action(&mut app, Action::ExpandTree, &mut refresh, &mut sender),
+            apply_action(
+                &mut app,
+                Action::ExpandTree,
+                &mut refresh,
+                &mut sender,
+                &mut (noop_await as fn(i32))
+            ),
             ActionResult {
                 should_quit: false,
                 needs_redraw: true
@@ -774,7 +909,8 @@ mod tests {
                 &mut app,
                 Action::BeginSignalConfirmation(1),
                 &mut refresh,
-                &mut sender
+                &mut sender,
+                &mut (noop_await as fn(i32)),
             ),
             ActionResult {
                 should_quit: false,
@@ -796,7 +932,8 @@ mod tests {
                 &mut app,
                 Action::ConfirmPendingSignal,
                 &mut refresh,
-                &mut sender
+                &mut sender,
+                &mut (noop_await as fn(i32)),
             ),
             ActionResult {
                 should_quit: false,
@@ -813,7 +950,13 @@ mod tests {
         let mut sender = |_: i32, _: Signal| Ok(());
         let selected = app.table_state.selected();
         assert_eq!(
-            apply_action(&mut app, Action::Noop, &mut refresh, &mut sender),
+            apply_action(
+                &mut app,
+                Action::Noop,
+                &mut refresh,
+                &mut sender,
+                &mut (noop_await as fn(i32))
+            ),
             ActionResult {
                 should_quit: false,
                 needs_redraw: false
@@ -847,6 +990,7 @@ mod tests {
             &mut next_event,
             &mut refresh,
             &mut sender,
+            &mut (noop_await as fn(i32)),
         )
         .expect("loop should terminate cleanly");
 
@@ -881,6 +1025,7 @@ mod tests {
             &mut next_event,
             &mut refresh,
             &mut sender,
+            &mut (noop_await as fn(i32)),
         )
         .expect("loop should terminate cleanly");
 
@@ -913,6 +1058,7 @@ mod tests {
             &mut next_event,
             &mut refresh,
             &mut sender,
+            &mut (noop_await as fn(i32)),
         )
         .expect("loop should terminate cleanly");
 
@@ -939,6 +1085,7 @@ mod tests {
             &mut next_event,
             &mut refresh,
             &mut sender,
+            &mut (noop_await as fn(i32)),
         )
         .expect("loop should terminate cleanly");
     }
@@ -957,6 +1104,7 @@ mod tests {
             &mut next_event,
             &mut refresh,
             &mut sender,
+            &mut (noop_await as fn(i32)),
         );
         assert!(result.is_err());
     }
@@ -977,6 +1125,7 @@ mod tests {
             &mut next_event,
             &mut refresh,
             &mut sender,
+            &mut (noop_await as fn(i32)),
         );
         assert!(result.is_err());
     }
@@ -1009,6 +1158,7 @@ mod tests {
             &mut next_event,
             &mut refresh,
             &mut sender,
+            &mut (noop_await as fn(i32)),
         )
         .expect("runtime should terminate cleanly");
 
@@ -1056,7 +1206,8 @@ mod tests {
                 &mut app,
                 Action::BeginInteractiveFilter,
                 &mut refresh,
-                &mut sender
+                &mut sender,
+                &mut (noop_await as fn(i32)),
             ),
             ActionResult {
                 should_quit: false,
@@ -1083,6 +1234,7 @@ mod tests {
             Action::FilterInputChar('f'),
             &mut refresh,
             &mut sender,
+            &mut (noop_await as fn(i32)),
         );
         let fi = app.filter_input.as_ref().unwrap();
         assert_eq!(fi.text, "f");
@@ -1104,6 +1256,7 @@ mod tests {
             Action::FilterInputBackspace,
             &mut refresh,
             &mut sender,
+            &mut (noop_await as fn(i32)),
         );
         assert_eq!(app.filter_input.as_ref().unwrap().text, "f");
     }
@@ -1118,7 +1271,13 @@ mod tests {
         let mut refresh = |_: Option<&crate::process::FilterSpec>| vec![row(11, "foo")];
         let mut sender = |_: i32, _: Signal| Ok(());
 
-        apply_action(&mut app, Action::FilterConfirm, &mut refresh, &mut sender);
+        apply_action(
+            &mut app,
+            Action::FilterConfirm,
+            &mut refresh,
+            &mut sender,
+            &mut (noop_await as fn(i32)),
+        );
         assert!(app.filter_input.is_none());
         assert_eq!(app.filter.as_deref(), Some("foo"));
         assert!(app.compiled_filter.is_some());
@@ -1134,7 +1293,13 @@ mod tests {
         let mut refresh = |_: Option<&crate::process::FilterSpec>| vec![row(11, "foo")];
         let mut sender = |_: i32, _: Signal| Ok(());
 
-        let result = apply_action(&mut app, Action::FilterCancel, &mut refresh, &mut sender);
+        let result = apply_action(
+            &mut app,
+            Action::FilterCancel,
+            &mut refresh,
+            &mut sender,
+            &mut (noop_await as fn(i32)),
+        );
         assert!(app.filter_input.is_none());
         assert!(result.needs_redraw);
     }
@@ -1197,6 +1362,7 @@ mod tests {
             Action::BeginInteractiveFilter,
             &mut refresh,
             &mut sender,
+            &mut (noop_await as fn(i32)),
         );
         let fi = app.filter_input.as_ref().unwrap();
         assert_eq!(fi.text, "foo");
@@ -1214,6 +1380,7 @@ mod tests {
             Action::FilterInputChar('x'),
             &mut refresh,
             &mut sender,
+            &mut (noop_await as fn(i32)),
         );
         assert!(!result.needs_redraw);
         // Rows must not change since filter mode is not active.
@@ -1231,6 +1398,7 @@ mod tests {
             Action::FilterInputBackspace,
             &mut refresh,
             &mut sender,
+            &mut (noop_await as fn(i32)),
         );
         assert!(!result.needs_redraw);
         assert_eq!(app.rows[0].pid, 11);
@@ -1254,6 +1422,7 @@ mod tests {
             Action::FilterInputBackspace,
             &mut refresh,
             &mut sender,
+            &mut (noop_await as fn(i32)),
         );
         let fi = app.filter_input.as_ref().unwrap();
         assert_eq!(fi.text, "");
@@ -1266,7 +1435,13 @@ mod tests {
         let mut refresh = |_: Option<&crate::process::FilterSpec>| vec![row(11, "foo")];
         let mut sender = |_: i32, _: Signal| Ok(());
 
-        apply_action(&mut app, Action::FilterConfirm, &mut refresh, &mut sender);
+        apply_action(
+            &mut app,
+            Action::FilterConfirm,
+            &mut refresh,
+            &mut sender,
+            &mut (noop_await as fn(i32)),
+        );
         // filter_input was None, compiled_filter stays None, rows refresh with None filter.
         assert!(app.filter_input.is_none());
         assert!(app.compiled_filter.is_none());
@@ -1283,7 +1458,13 @@ mod tests {
             |_: Option<&crate::process::FilterSpec>| vec![row(11, "foo"), row(22, "bar")];
         let mut sender = |_: i32, _: Signal| Ok(());
 
-        apply_action(&mut app, Action::FilterConfirm, &mut refresh, &mut sender);
+        apply_action(
+            &mut app,
+            Action::FilterConfirm,
+            &mut refresh,
+            &mut sender,
+            &mut (noop_await as fn(i32)),
+        );
         assert!(app.filter_input.is_none());
         assert!(app.filter.is_none());
         assert!(app.compiled_filter.is_none());
@@ -1295,7 +1476,13 @@ mod tests {
         let mut refresh = |_: Option<&crate::process::FilterSpec>| vec![row(22, "bar")];
         let mut sender = |_: i32, _: Signal| Ok(());
 
-        let result = apply_action(&mut app, Action::FilterCancel, &mut refresh, &mut sender);
+        let result = apply_action(
+            &mut app,
+            Action::FilterCancel,
+            &mut refresh,
+            &mut sender,
+            &mut (noop_await as fn(i32)),
+        );
         assert!(!result.needs_redraw);
         // Rows must not change since there was nothing to cancel.
         assert_eq!(app.rows[0].pid, 11);
@@ -1323,6 +1510,7 @@ mod tests {
             Action::BeginInteractiveFilter,
             &mut refresh,
             &mut sender,
+            &mut (noop_await as fn(i32)),
         );
         // The row list must already reflect the pre-filled filter.
         assert_eq!(app.rows.len(), 1);
@@ -1341,7 +1529,13 @@ mod tests {
             |_: Option<&crate::process::FilterSpec>| vec![row(11, "foo"), row(22, "bar")];
         let mut sender = |_: i32, _: Signal| Ok(());
 
-        apply_action(&mut app, Action::FilterCancel, &mut refresh, &mut sender);
+        apply_action(
+            &mut app,
+            Action::FilterCancel,
+            &mut refresh,
+            &mut sender,
+            &mut (noop_await as fn(i32)),
+        );
         assert_eq!(app.table_state.selected(), Some(0));
     }
 
@@ -1362,6 +1556,7 @@ mod tests {
             Action::FilterInputChar('f'),
             &mut refresh,
             &mut sender,
+            &mut (noop_await as fn(i32)),
         );
         assert_eq!(app.table_state.selected(), Some(0));
     }

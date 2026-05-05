@@ -57,6 +57,7 @@ pub(crate) fn run() -> Result<()> {
         build_debug_rows(seed.get())
     };
     let mut sender = debug_signal_sender;
+    let mut await_pid_gone = |_pid: i32| {};
     let mut app = App::with_rows(None, initial_rows);
     app.status = "debug tui: synthetic rows only".to_string();
     let result = run_event_loop(
@@ -65,6 +66,7 @@ pub(crate) fn run() -> Result<()> {
         &mut next_event,
         &mut refresh_rows,
         &mut sender,
+        &mut await_pid_gone,
     );
     restore_terminal(terminal);
     result

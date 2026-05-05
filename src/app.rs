@@ -292,10 +292,15 @@ impl App {
     }
 
     /// Confirm and execute a pending signal action.
-    pub fn confirm_signal(&mut self, sender: &mut dyn FnMut(i32, Signal) -> Result<(), String>) {
-        let Some(pending) = self.pending_confirmation.take() else {
-            return;
-        };
+    ///
+    /// Returns `Some(pid)` when the sender accepted the signal so callers can
+    /// follow up (e.g. wait for the kernel to remove the entry from `/proc`).
+    /// Returns `None` when no confirmation was pending or the sender failed.
+    pub fn confirm_signal(
+        &mut self,
+        sender: &mut dyn FnMut(i32, Signal) -> Result<(), String>,
+    ) -> Option<i32> {
+        let pending = self.pending_confirmation.take()?;
 
         match sender(pending.pid, pending.signal) {
             Ok(()) => {
@@ -303,9 +308,11 @@ impl App {
                     "sent {:?} ({}) to pid {}",
                     pending.signal, pending.digit, pending.pid
                 );
+                Some(pending.pid)
             }
             Err(err) => {
                 self.status = format!("failed to signal pid {}: {}", pending.pid, err);
+                None
             }
         }
     }
