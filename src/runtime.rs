@@ -427,7 +427,17 @@ pub fn run_interactive(
     };
     let mut refresh_rows =
         |filter: Option<&process::FilterSpec>| process::refresh_rows(&mut sys, filter, user_only);
-    let mut sender = |pid, sig| signal::send_signal(pid, sig).map_err(|err| err.to_string());
+    let mut sender = |pid, sig| {
+        let result = signal::send_signal(pid, sig).map_err(|err| err.to_string());
+        if result.is_ok() {
+            let _ = signal::wait_for_pid_gone(
+                pid,
+                Duration::from_millis(200),
+                Duration::from_millis(20),
+            );
+        }
+        result
+    };
     let result = run_with_runtime(
         filter,
         compiled_filter,
