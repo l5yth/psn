@@ -434,7 +434,6 @@ pub fn run_interactive(
     let mut refresh_rows =
         |filter: Option<&process::FilterSpec>| process::refresh_rows(&mut sys, filter, user_only);
     let mut sender = |pid, sig| signal::send_signal(pid, sig).map_err(|err| err.to_string());
-    let mut await_pid_gone = |pid: i32| signal::wait_for_pid_gone_default(pid);
     let result = run_with_runtime(
         filter,
         compiled_filter,
@@ -442,7 +441,7 @@ pub fn run_interactive(
         &mut next_event,
         &mut refresh_rows,
         &mut sender,
-        &mut await_pid_gone,
+        &mut (signal::wait_for_pid_gone_default as fn(i32)),
     );
     restore_terminal(terminal);
     result
@@ -509,6 +508,28 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
     use sysinfo::ProcessStatus;
+
+    /// Stand-in for the production `await_pid_gone` callback. Defined as a
+    /// real `fn` so the body is covered by `noop_await_runs` and every other
+    /// test can reference it without instantiating its own closure.
+    fn noop_await(_: i32) {}
+
+    #[test]
+    fn noop_await_runs() {
+        noop_await(0);
+    }
+
+    /// Panicking `await_pid_gone` stand-in for negative tests that assert the
+    /// callback is never invoked. Covered by `must_not_run_panics_when_called`.
+    fn must_not_run(_: i32) {
+        panic!("await_pid_gone must not be called when sender fails");
+    }
+
+    #[test]
+    #[should_panic(expected = "await_pid_gone must not be called when sender fails")]
+    fn must_not_run_panics_when_called() {
+        must_not_run(0);
+    }
 
     fn row(pid: i32, name: &str) -> ProcRow {
         ProcRow {
@@ -612,7 +633,7 @@ mod tests {
                 Action::ConfirmPendingSignal,
                 &mut refresh,
                 &mut sender,
-                &mut |_: i32| {},
+                &mut (noop_await as fn(i32)),
             ),
             ActionResult {
                 should_quit: false,
@@ -652,20 +673,17 @@ mod tests {
         app.begin_signal_confirmation(1);
         let mut refresh = |_: Option<&crate::process::FilterSpec>| vec![row(11, "foo")];
         let mut sender = |_: i32, _: Signal| Err("denied".to_string());
-        let mut awaited = false;
-        let mut await_pid_gone = |_: i32| {
-            awaited = true;
-        };
 
+        // `must_not_run` panics if invoked; reaching the assert means the await
+        // hook was correctly skipped on the sender-failure path.
         apply_action(
             &mut app,
             Action::ConfirmPendingSignal,
             &mut refresh,
             &mut sender,
-            &mut await_pid_gone,
+            &mut (must_not_run as fn(i32)),
         );
 
-        assert!(!awaited);
         assert!(app.status.contains("failed"));
     }
 
@@ -682,7 +700,7 @@ mod tests {
                 Action::CancelPendingSignal,
                 &mut refresh,
                 &mut sender,
-                &mut |_: i32| {},
+                &mut (noop_await as fn(i32)),
             ),
             ActionResult {
                 should_quit: false,
@@ -703,7 +721,7 @@ mod tests {
                 Action::Quit,
                 &mut refresh,
                 &mut sender,
-                &mut |_: i32| {}
+                &mut (noop_await as fn(i32))
             ),
             ActionResult {
                 should_quit: true,
@@ -723,7 +741,7 @@ mod tests {
                 Action::Refresh,
                 &mut refresh,
                 &mut sender,
-                &mut |_: i32| {}
+                &mut (noop_await as fn(i32))
             ),
             ActionResult {
                 should_quit: false,
@@ -745,7 +763,7 @@ mod tests {
             Action::Refresh,
             &mut refresh,
             &mut sender,
-            &mut |_: i32| {},
+            &mut (noop_await as fn(i32)),
         );
 
         assert_eq!(
@@ -754,7 +772,7 @@ mod tests {
                 Action::MoveDown,
                 &mut refresh,
                 &mut sender,
-                &mut |_: i32| {}
+                &mut (noop_await as fn(i32))
             ),
             ActionResult {
                 should_quit: false,
@@ -769,7 +787,7 @@ mod tests {
                 Action::MoveUp,
                 &mut refresh,
                 &mut sender,
-                &mut |_: i32| {}
+                &mut (noop_await as fn(i32))
             ),
             ActionResult {
                 should_quit: false,
@@ -792,7 +810,7 @@ mod tests {
                 Action::PageDown,
                 &mut refresh,
                 &mut sender,
-                &mut |_: i32| {}
+                &mut (noop_await as fn(i32))
             ),
             ActionResult {
                 should_quit: false,
@@ -807,7 +825,7 @@ mod tests {
                 Action::PageUp,
                 &mut refresh,
                 &mut sender,
-                &mut |_: i32| {}
+                &mut (noop_await as fn(i32))
             ),
             ActionResult {
                 should_quit: false,
@@ -855,7 +873,7 @@ mod tests {
                 Action::CollapseTree,
                 &mut refresh,
                 &mut sender,
-                &mut |_: i32| {}
+                &mut (noop_await as fn(i32))
             ),
             ActionResult {
                 should_quit: false,
@@ -870,7 +888,7 @@ mod tests {
                 Action::ExpandTree,
                 &mut refresh,
                 &mut sender,
-                &mut |_: i32| {}
+                &mut (noop_await as fn(i32))
             ),
             ActionResult {
                 should_quit: false,
@@ -892,7 +910,7 @@ mod tests {
                 Action::BeginSignalConfirmation(1),
                 &mut refresh,
                 &mut sender,
-                &mut |_: i32| {},
+                &mut (noop_await as fn(i32)),
             ),
             ActionResult {
                 should_quit: false,
@@ -915,7 +933,7 @@ mod tests {
                 Action::ConfirmPendingSignal,
                 &mut refresh,
                 &mut sender,
-                &mut |_: i32| {},
+                &mut (noop_await as fn(i32)),
             ),
             ActionResult {
                 should_quit: false,
@@ -937,7 +955,7 @@ mod tests {
                 Action::Noop,
                 &mut refresh,
                 &mut sender,
-                &mut |_: i32| {}
+                &mut (noop_await as fn(i32))
             ),
             ActionResult {
                 should_quit: false,
@@ -972,7 +990,7 @@ mod tests {
             &mut next_event,
             &mut refresh,
             &mut sender,
-            &mut |_: i32| {},
+            &mut (noop_await as fn(i32)),
         )
         .expect("loop should terminate cleanly");
 
@@ -1007,7 +1025,7 @@ mod tests {
             &mut next_event,
             &mut refresh,
             &mut sender,
-            &mut |_: i32| {},
+            &mut (noop_await as fn(i32)),
         )
         .expect("loop should terminate cleanly");
 
@@ -1040,7 +1058,7 @@ mod tests {
             &mut next_event,
             &mut refresh,
             &mut sender,
-            &mut |_: i32| {},
+            &mut (noop_await as fn(i32)),
         )
         .expect("loop should terminate cleanly");
 
@@ -1067,7 +1085,7 @@ mod tests {
             &mut next_event,
             &mut refresh,
             &mut sender,
-            &mut |_: i32| {},
+            &mut (noop_await as fn(i32)),
         )
         .expect("loop should terminate cleanly");
     }
@@ -1086,7 +1104,7 @@ mod tests {
             &mut next_event,
             &mut refresh,
             &mut sender,
-            &mut |_: i32| {},
+            &mut (noop_await as fn(i32)),
         );
         assert!(result.is_err());
     }
@@ -1107,7 +1125,7 @@ mod tests {
             &mut next_event,
             &mut refresh,
             &mut sender,
-            &mut |_: i32| {},
+            &mut (noop_await as fn(i32)),
         );
         assert!(result.is_err());
     }
@@ -1140,7 +1158,7 @@ mod tests {
             &mut next_event,
             &mut refresh,
             &mut sender,
-            &mut |_: i32| {},
+            &mut (noop_await as fn(i32)),
         )
         .expect("runtime should terminate cleanly");
 
@@ -1189,7 +1207,7 @@ mod tests {
                 Action::BeginInteractiveFilter,
                 &mut refresh,
                 &mut sender,
-                &mut |_: i32| {},
+                &mut (noop_await as fn(i32)),
             ),
             ActionResult {
                 should_quit: false,
@@ -1216,7 +1234,7 @@ mod tests {
             Action::FilterInputChar('f'),
             &mut refresh,
             &mut sender,
-            &mut |_: i32| {},
+            &mut (noop_await as fn(i32)),
         );
         let fi = app.filter_input.as_ref().unwrap();
         assert_eq!(fi.text, "f");
@@ -1238,7 +1256,7 @@ mod tests {
             Action::FilterInputBackspace,
             &mut refresh,
             &mut sender,
-            &mut |_: i32| {},
+            &mut (noop_await as fn(i32)),
         );
         assert_eq!(app.filter_input.as_ref().unwrap().text, "f");
     }
@@ -1258,7 +1276,7 @@ mod tests {
             Action::FilterConfirm,
             &mut refresh,
             &mut sender,
-            &mut |_: i32| {},
+            &mut (noop_await as fn(i32)),
         );
         assert!(app.filter_input.is_none());
         assert_eq!(app.filter.as_deref(), Some("foo"));
@@ -1280,7 +1298,7 @@ mod tests {
             Action::FilterCancel,
             &mut refresh,
             &mut sender,
-            &mut |_: i32| {},
+            &mut (noop_await as fn(i32)),
         );
         assert!(app.filter_input.is_none());
         assert!(result.needs_redraw);
@@ -1344,7 +1362,7 @@ mod tests {
             Action::BeginInteractiveFilter,
             &mut refresh,
             &mut sender,
-            &mut |_: i32| {},
+            &mut (noop_await as fn(i32)),
         );
         let fi = app.filter_input.as_ref().unwrap();
         assert_eq!(fi.text, "foo");
@@ -1362,7 +1380,7 @@ mod tests {
             Action::FilterInputChar('x'),
             &mut refresh,
             &mut sender,
-            &mut |_: i32| {},
+            &mut (noop_await as fn(i32)),
         );
         assert!(!result.needs_redraw);
         // Rows must not change since filter mode is not active.
@@ -1380,7 +1398,7 @@ mod tests {
             Action::FilterInputBackspace,
             &mut refresh,
             &mut sender,
-            &mut |_: i32| {},
+            &mut (noop_await as fn(i32)),
         );
         assert!(!result.needs_redraw);
         assert_eq!(app.rows[0].pid, 11);
@@ -1404,7 +1422,7 @@ mod tests {
             Action::FilterInputBackspace,
             &mut refresh,
             &mut sender,
-            &mut |_: i32| {},
+            &mut (noop_await as fn(i32)),
         );
         let fi = app.filter_input.as_ref().unwrap();
         assert_eq!(fi.text, "");
@@ -1422,7 +1440,7 @@ mod tests {
             Action::FilterConfirm,
             &mut refresh,
             &mut sender,
-            &mut |_: i32| {},
+            &mut (noop_await as fn(i32)),
         );
         // filter_input was None, compiled_filter stays None, rows refresh with None filter.
         assert!(app.filter_input.is_none());
@@ -1445,7 +1463,7 @@ mod tests {
             Action::FilterConfirm,
             &mut refresh,
             &mut sender,
-            &mut |_: i32| {},
+            &mut (noop_await as fn(i32)),
         );
         assert!(app.filter_input.is_none());
         assert!(app.filter.is_none());
@@ -1463,7 +1481,7 @@ mod tests {
             Action::FilterCancel,
             &mut refresh,
             &mut sender,
-            &mut |_: i32| {},
+            &mut (noop_await as fn(i32)),
         );
         assert!(!result.needs_redraw);
         // Rows must not change since there was nothing to cancel.
@@ -1492,7 +1510,7 @@ mod tests {
             Action::BeginInteractiveFilter,
             &mut refresh,
             &mut sender,
-            &mut |_: i32| {},
+            &mut (noop_await as fn(i32)),
         );
         // The row list must already reflect the pre-filled filter.
         assert_eq!(app.rows.len(), 1);
@@ -1516,7 +1534,7 @@ mod tests {
             Action::FilterCancel,
             &mut refresh,
             &mut sender,
-            &mut |_: i32| {},
+            &mut (noop_await as fn(i32)),
         );
         assert_eq!(app.table_state.selected(), Some(0));
     }
@@ -1538,7 +1556,7 @@ mod tests {
             Action::FilterInputChar('f'),
             &mut refresh,
             &mut sender,
-            &mut |_: i32| {},
+            &mut (noop_await as fn(i32)),
         );
         assert_eq!(app.table_state.selected(), Some(0));
     }
