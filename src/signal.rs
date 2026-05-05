@@ -48,6 +48,16 @@ pub fn send_signal(pid: i32, signal: Signal) -> nix::Result<()> {
     kill(Pid::from_raw(pid), signal)
 }
 
+/// Upper bound on how long we wait for a signaled process to disappear from
+/// `/proc` before giving up and refreshing anyway. Sized to be short enough that
+/// the event loop freeze is not perceptible for catchable signals (SIGHUP,
+/// SIGINT, …) that the target may not honor, while still leaving comfortable
+/// headroom for SIGKILL — which the kernel typically reaps within a few ms.
+pub const SIGNAL_REAP_TIMEOUT: Duration = Duration::from_millis(100);
+
+/// Polling interval for the existence probe inside [`wait_for_pid_gone`].
+pub const SIGNAL_REAP_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
 /// Poll until `pid` is absent from the process table or `timeout` elapses.
 ///
 /// Probes existence with `kill(pid, None)` (POSIX null-signal): `Err(ESRCH)`
@@ -58,6 +68,12 @@ pub fn send_signal(pid: i32, signal: Signal) -> nix::Result<()> {
 /// Returns `true` if the process is gone before the deadline, `false` if it is
 /// still alive after `timeout`. The first probe always runs, so a `timeout` of
 /// `Duration::ZERO` still returns `true` for an already-absent pid.
+///
+/// PID reuse: if the kernel reaps the original and recycles the pid for an
+/// unrelated process inside the polling window, this returns `false`. The
+/// caller must re-key on `(pid, start_time)` (see [`crate::app::App`]'s
+/// `pending_target_matches_current_rows`) to detect that case after the
+/// follow-up refresh.
 pub fn wait_for_pid_gone(pid: i32, timeout: Duration, interval: Duration) -> bool {
     let started = Instant::now();
     loop {
@@ -73,9 +89,17 @@ pub fn wait_for_pid_gone(pid: i32, timeout: Duration, interval: Duration) -> boo
     }
 }
 
+/// Convenience wrapper around [`wait_for_pid_gone`] using the project-default
+/// timeout and polling interval. The boolean outcome is intentionally
+/// discarded: the caller will refresh from `/proc` next, which surfaces the
+/// truth (gone vs. still-alive after a non-fatal signal) either way.
+pub fn wait_for_pid_gone_default(pid: i32) {
+    let _ = wait_for_pid_gone(pid, SIGNAL_REAP_TIMEOUT, SIGNAL_REAP_POLL_INTERVAL);
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{send_signal, signal_from_digit, wait_for_pid_gone};
+    use super::{send_signal, signal_from_digit, wait_for_pid_gone, wait_for_pid_gone_default};
     use nix::sys::signal::Signal;
     use std::{
         process::Command,
@@ -139,5 +163,13 @@ mod tests {
             Duration::from_millis(500),
             Duration::from_millis(10),
         ));
+    }
+
+    #[test]
+    fn wait_for_pid_gone_default_returns_quickly_for_nonexistent_pid() {
+        let started = Instant::now();
+        wait_for_pid_gone_default(i32::MAX - 1);
+        // Nonexistent pid resolves on the first probe, well below the cap.
+        assert!(started.elapsed() < super::SIGNAL_REAP_TIMEOUT);
     }
 }
