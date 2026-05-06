@@ -1,6 +1,6 @@
 pkgbase = psn-git
 	pkgdesc = Terminal UI for process status navigation and control
-	pkgver = 0.1.4.r0.gXXXXXXX
+	pkgver = 0.1.4.r0.ge5eac85
 	pkgrel = 1
 	url = https://github.com/l5yth/psn
 	arch = x86_64
