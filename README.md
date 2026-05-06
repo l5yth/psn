@@ -76,7 +76,7 @@ cargo run --release --
 ## Usage
 
 ```text
-psn v0.1.2
+psn v0.1.4
 process status navigator
 apache v2 (c) 2026 l5yth
 
