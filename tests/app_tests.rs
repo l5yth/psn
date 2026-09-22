@@ -807,3 +807,64 @@ fn select_first_selects_none_when_no_rows() {
     app.select_first();
     assert_eq!(app.table_state.selected(), None);
 }
+
+#[test]
+fn page_down_without_selection_and_without_rows_leaves_selection_unset() {
+    // Guards the empty-list branch: with nothing selected and nothing visible
+    // there is no index to land on, so page_down must return without touching
+    // the table state rather than selecting `step - 1` out of an empty list.
+    let mut app = App::with_rows(None, vec![]);
+    assert_eq!(app.table_state.selected(), None);
+
+    app.page_down(10);
+
+    assert_eq!(app.table_state.selected(), None);
+}
+
+#[test]
+fn page_down_without_selection_selects_within_visible_rows() {
+    // The sibling branch: no selection but rows exist, so the step is clamped
+    // to the last visible row instead of running past the end.
+    let mut app = App::with_rows(None, vec![row(1), row(2)]);
+    app.table_state.select(None);
+
+    app.page_down(10);
+
+    assert_eq!(app.table_state.selected(), Some(1));
+}
+
+#[test]
+fn collapse_selected_returns_false_without_a_selected_row() {
+    let mut app = App::with_rows(None, vec![]);
+
+    assert!(!app.collapse_selected());
+    assert!(app.collapsed_pids.is_empty());
+}
+
+#[test]
+fn expand_selected_returns_false_without_a_selected_row() {
+    let mut app = App::with_rows(None, vec![]);
+
+    assert!(!app.expand_selected());
+}
+
+#[test]
+fn expand_selected_returns_false_when_row_is_already_expanded() {
+    // A row that is not collapsed has nothing to expand, so the call is a
+    // no-op and must report that it changed nothing.
+    let mut app = App::with_rows(None, vec![row(1)]);
+    assert!(app.collapsed_pids.is_empty());
+
+    assert!(!app.expand_selected());
+}
+
+#[test]
+fn begin_signal_confirmation_is_ignored_without_a_selected_row() {
+    // No selection means no target, so no confirmation prompt may open. If it
+    // did, confirming it would signal whatever row later landed at that index.
+    let mut app = App::with_rows(None, vec![]);
+
+    app.begin_signal_confirmation(9);
+
+    assert!(app.pending_confirmation.is_none());
+}
