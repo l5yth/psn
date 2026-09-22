@@ -13,6 +13,8 @@
 [![Top Language](https://img.shields.io/github/languages/top/l5yth/psn)](https://github.com/l5yth/psn)
 [![License: Apache-2.0](https://img.shields.io/github/license/l5yth/psn)](https://github.com/l5yth/psn/blob/main/LICENSE)
 
+_process status navigator_
+
 `psn` is a Rust terminal UI for viewing process status and sending signals.
 
 ![psn TUI overview](assets/images/psn-tui-overview.png)
