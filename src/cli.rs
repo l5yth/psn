@@ -38,12 +38,24 @@ pub enum CliCommand {
 }
 
 /// Parse CLI arguments from an iterator (including argv0 as first item).
+///
+/// This is a thin generic shim so callers can pass `std::env::Args`, a
+/// `Vec<String>`, or a literal array. All parsing lives in the non-generic
+/// `parse_argv`: a generic body is monomorphized once per argument type, and
+/// every copy carries its own counters, so the error paths that a given
+/// call site never takes would each report as uncovered even though the
+/// source line is exercised elsewhere. Keeping the body non-generic means the
+/// logic is compiled, and counted, exactly once.
 pub fn parse_args<I>(args: I) -> Result<CliCommand>
 where
     I: IntoIterator,
     I::Item: Into<String>,
 {
-    let mut args: Vec<String> = args.into_iter().map(Into::into).collect();
+    parse_argv(args.into_iter().map(Into::into).collect())
+}
+
+/// Parse an owned argv vector (including argv0 as first item).
+fn parse_argv(mut args: Vec<String>) -> Result<CliCommand> {
     if !args.is_empty() {
         args.remove(0);
     }

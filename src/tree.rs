@@ -274,6 +274,35 @@ mod tests {
     }
 
     #[test]
+    fn display_order_with_prefix_draws_branch_and_continuation_connectors() {
+        // A root with two children, each carrying one child of its own. This is
+        // the shallowest shape that exercises every connector case: a non-last
+        // child (`├─`), a last child (`└─`), a grandchild whose ancestor still
+        // has a sibling below it (continuation `│ `), and a grandchild whose
+        // ancestor was last (blank `  `).
+        let rows = vec![
+            row(2, None, Vec::new(), "root"),
+            row(3, Some(2), vec![2], "first"),
+            row(4, Some(3), vec![3, 2], "under_first"),
+            row(5, Some(2), vec![2], "last"),
+            row(6, Some(5), vec![5, 2], "under_last"),
+        ];
+
+        let order = display_order_with_prefix(&rows, &HashSet::new());
+
+        assert_eq!(
+            order,
+            vec![
+                (0, "".to_string()),
+                (1, "├─".to_string()),
+                (2, "│ └─".to_string()),
+                (3, "└─".to_string()),
+                (4, "  └─".to_string()),
+            ]
+        );
+    }
+
+    #[test]
     fn display_rows_hide_collapsed_descendants_and_mark_root() {
         let rows = vec![
             row(1, None, Vec::new(), "init"),

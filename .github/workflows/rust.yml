@@ -55,7 +55,18 @@ jobs:
         uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Generate lcov coverage
-        run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+        # Ratchet, not the house 100% target. The uncovered remainder is the
+        # code that only runs against a real TTY: terminal.rs's crossterm
+        # impl, runtime.rs's run_interactive wiring, and lib.rs's call into
+        # it. None of it can execute under `cargo test`, so the gate holds the
+        # line where it actually is instead of asserting a number the suite
+        # cannot reach. Measured 96.40% lines / 83.24% functions, and stable
+        # to the digit across repeat runs, so these floors trip on a real
+        # regression rather than on noise. Raise them when coverage rises;
+        # never lower them.
+        run: >-
+          cargo llvm-cov --workspace --lcov --output-path lcov.info
+          --fail-under-lines 96 --fail-under-functions 83
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v7
