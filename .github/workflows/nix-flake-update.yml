@@ -1,0 +1,73 @@
+# Copyright (c) 2026 l5yth
+# SPDX-License-Identifier: Apache-2.0
+
+# Keeps flake.lock from rotting.
+#
+# The `nix` job in linux.yml builds against the toolchain pinned in
+# flake.lock, which lags the `dtolnay/rust-toolchain@stable` toolchain the
+# Rust workflow installs. A dependency that raises its MSRV past the pinned
+# rustc therefore breaks `nix` while `Rust` stays green. That is exactly how
+# the Linux workflow stayed red for 9 consecutive runs on main in 2026
+# (sysinfo 0.39.x requires rustc 1.95; the pin shipped 1.93.0).
+#
+# This workflow refreshes the pin on a schedule and opens a PR. It does NOT
+# run as part of the build: CI always builds the committed lock, never a
+# freshly updated one, or the lock would not describe what CI tested.
+
+name: Nix flake update
+
+on:
+  schedule:
+    # Thursdays 05:00 UTC. Dependabot's `interval: weekly` default is Monday
+    # 05:00 UTC, so this deliberately does not share a slot with it: the pin
+    # moves midweek, after that week's cargo bumps have already landed.
+    - cron: "0 5 * * 4"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Update flake.lock
+        run: nix flake update
+
+      - name: Verify the updated lock builds
+        # A PR opened with GITHUB_TOKEN does not trigger other workflows, so
+        # the Linux workflow's `nix` job would not re-run on this PR. Build
+        # here instead: a lock that does not build never becomes a PR.
+        run: nix build . --print-build-logs
+
+      - name: Open pull request
+        uses: peter-evans/create-pull-request@v8
+        with:
+          branch: l5y-ci-flake-lock
+          delete-branch: true
+          commit-message: "chore: update flake.lock"
+          title: "chore: update flake.lock"
+          body: |
+            Automated weekly `nix flake update`.
+
+            Verified before opening: `nix build .` succeeded against the
+            updated lock.
+
+            Note that a PR opened with `GITHUB_TOKEN` does not trigger other
+            workflows, so neither `Linux` nor `Rust` runs on this PR
+            automatically. The build above is the substitute for the `nix`
+            job only; it does not cover clippy, rustdoc or coverage. Close
+            and reopen the PR, or push an empty commit, to get the full
+            gates before merging.
+          labels: dependencies

@@ -27,15 +27,12 @@ Read more: [Dev.to: psn - a minimalist process navigator for Linux](https://dev.
 
 ## Dependencies
 
-- GNU/Linux (process data is read from `/proc` via [sysinfo](https://crates.io/crates/sysinfo) — no external binaries required)
-- Rust stable toolchain (Rust 2024 edition, Cargo) for building from source
+- GNU/Linux. Process data is read from `/proc` via [sysinfo](https://crates.io/crates/sysinfo). No external binaries.
+- Rust stable toolchain (Rust 2024 edition, Cargo) for building from source.
 
 Core crates: `ratatui`, `crossterm`, `sysinfo`, `nix`, `anyhow`, `users`.
 
 ## Installation
-
-Helpers exist for Arch and Gentoo-based systems but you can install also
-via crates.io or from source directly.
 
 ### Archlinux
 
@@ -53,8 +50,6 @@ cargo install psn
 
 ### From Source
 
-Build from source:
-
 ```bash
 git clone https://github.com/l5yth/psn.git
 cd psn
@@ -67,7 +62,7 @@ Run the built binary:
 ./target/release/psn
 ```
 
-Or run directly in development:
+Run without building a release binary:
 
 ```bash
 cargo run --release --
@@ -76,7 +71,7 @@ cargo run --release --
 ## Usage
 
 ```text
-psn v0.1.4
+psn v0.1.5
 process status navigator
 apache v2 (c) 2026 l5yth
 
@@ -122,7 +117,7 @@ In-app keys:
 - `PgUp` / `PgDn`: page up/down
 - `←` / `→`: collapse / expand tree node
 - `/`: open interactive filter prompt (live, substring match); `Enter` confirms, `Esc` cancels
-- `1`..`9`: send corresponding signal to selected process (prompts for confirmation); not available while the filter prompt is open — press `Enter` or `Esc` first
+- `1`..`9`: send corresponding signal to selected process (prompts for confirmation). Unavailable while the filter prompt is open; press `Enter` or `Esc` first
 
 ## Development
 
