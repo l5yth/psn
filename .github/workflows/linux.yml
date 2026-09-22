@@ -39,18 +39,28 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Bootstrap Gentoo repo and profile
+        # Sync from a daily snapshot tarball, not the live rsync mirror.
+        # rsync.gentoo.org updates continuously, so a sync that straddles an
+        # update fetches a metadata manifest that no longer matches the files
+        # it describes, and portage aborts:
+        #   Manifest mismatch for metadata/md5-cache/Manifest.gz
+        #     __size__: expected: 29048, have: 29060
+        # That killed this job twice on 2026-09-22 (different file each time)
+        # after ~47 minutes against a ~2 minute norm. A webrsync snapshot is
+        # internally consistent by construction and md5/GPG verified, so the
+        # race cannot occur. Cost: the tree can be up to 24h old, which is
+        # irrelevant for validating an ebuild.
         run: |
           mkdir -p /etc/portage/repos.conf
           cat > /etc/portage/repos.conf/gentoo.conf <<'EOF'
           [gentoo]
           location = /var/db/repos/gentoo
-          sync-type = rsync
-          sync-uri = rsync://rsync.gentoo.org/gentoo-portage
+          sync-type = webrsync
           auto-sync = yes
           EOF
 
           mkdir -p /var/db/repos/gentoo
-          emerge --sync --quiet
+          emerge-webrsync --quiet
 
           if [ ! -L /etc/portage/make.profile ]; then
             profile_path="$(find /var/db/repos/gentoo/profiles/default/linux/amd64 -type f -name make.defaults | head -n1)"
