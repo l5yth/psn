@@ -7,8 +7,8 @@
 # flake.lock, which lags the `dtolnay/rust-toolchain@stable` toolchain the
 # Rust workflow installs. A dependency that raises its MSRV past the pinned
 # rustc therefore breaks `nix` while `Rust` stays green. That is exactly how
-# the Linux workflow stayed red for 16 runs in 2026 (sysinfo 0.39.x requires
-# rustc 1.95; the pin shipped 1.93.0).
+# the Linux workflow stayed red for 9 consecutive runs on main in 2026
+# (sysinfo 0.39.x requires rustc 1.95; the pin shipped 1.93.0).
 #
 # This workflow refreshes the pin on a schedule and opens a PR. It does NOT
 # run as part of the build: CI always builds the committed lock, never a
@@ -18,8 +18,10 @@ name: Nix flake update
 
 on:
   schedule:
-    # Mondays 05:00 UTC, ahead of Dependabot's own weekly cargo run.
-    - cron: "0 5 * * 1"
+    # Thursdays 05:00 UTC. Dependabot's `interval: weekly` default is Monday
+    # 05:00 UTC, so this deliberately does not share a slot with it: the pin
+    # moves midweek, after that week's cargo bumps have already landed.
+    - cron: "0 5 * * 4"
   workflow_dispatch:
 
 permissions:
@@ -60,6 +62,12 @@ jobs:
             Automated weekly `nix flake update`.
 
             Verified before opening: `nix build .` succeeded against the
-            updated lock, which is the same check the `nix` job in the Linux
-            workflow runs.
+            updated lock.
+
+            Note that a PR opened with `GITHUB_TOKEN` does not trigger other
+            workflows, so neither `Linux` nor `Rust` runs on this PR
+            automatically. The build above is the substitute for the `nix`
+            job only; it does not cover clippy, rustdoc or coverage. Close
+            and reopen the PR, or push an empty commit, to get the full
+            gates before merging.
           labels: dependencies
