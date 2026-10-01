@@ -49,7 +49,9 @@ jobs:
         # A PR opened with GITHUB_TOKEN does not trigger other workflows, so
         # the Linux workflow's `nix` job would not re-run on this PR. Build
         # here instead: a lock that does not build never becomes a PR.
-        run: nix build . --print-build-logs
+        # --no-link: a default build leaves a `result` symlink in the
+        # checkout, and the next step commits every change it finds there.
+        run: nix build . --no-link --print-build-logs
 
       - name: Open pull request
         uses: peter-evans/create-pull-request@v8
