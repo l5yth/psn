@@ -564,7 +564,7 @@ mod tests {
 
     #[test]
     fn refresh_rows_returns_sorted_data() {
-        let mut sys = System::new_all();
+        let mut sys = System::new_all().expect("sysinfo should initialize");
         let rows = refresh_rows(&mut sys, None, false);
 
         let mut sorted = rows.clone();
@@ -574,7 +574,7 @@ mod tests {
 
     #[test]
     fn refresh_rows_applies_filter() {
-        let mut sys = System::new_all();
+        let mut sys = System::new_all().expect("sysinfo should initialize");
         let filter = FilterSpec::Substring {
             raw: "__psn_filter_that_should_not_exist__".to_string(),
             lowered: "__psn_filter_that_should_not_exist__".to_string(),
@@ -586,8 +586,18 @@ mod tests {
 
     #[test]
     fn refresh_rows_user_only_applies_current_uid_branch() {
-        let mut sys = System::new_all();
+        let mut sys = System::new_all().expect("sysinfo should initialize");
         let _rows = refresh_rows(&mut sys, None, true);
+    }
+
+    #[test]
+    fn refresh_rows_lists_the_current_process() {
+        // `run_interactive` builds its `System` the same way; sysinfo 0.40
+        // made `System::new_all` fallible.
+        let mut sys = System::new_all().expect("sysinfo should initialize");
+        let me = std::process::id() as i32;
+        let rows = refresh_rows(&mut sys, None, false);
+        assert!(rows.iter().any(|row| row.pid == me));
     }
 
     #[test]
