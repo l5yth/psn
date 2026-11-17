@@ -413,8 +413,10 @@ pub fn run_interactive(
     compiled_filter: Option<process::FilterSpec>,
     user_only: bool,
 ) -> Result<()> {
+    // Fallible since sysinfo 0.40: built before terminal setup, so an error
+    // returns with the terminal untouched.
+    let mut sys = System::new_all()?;
     let mut terminal = terminal::setup()?;
-    let mut sys = System::new_all();
 
     let mut draw = |app: &mut App| -> Result<()> {
         terminal.draw(|frame| ui::render(frame, app))?;
